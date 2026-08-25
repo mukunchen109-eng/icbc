@@ -3,9 +3,17 @@ server:
 spring:
   application:
     name: financial-intelligence-system
+  datasource:
+    url: ${ICBC_DB_URL:jdbc:mysql://icbc-db123.mysql.polardb.rds.aliyuncs.com:3306/db1?useSSL=true&serverTimezone=Asia%2FShanghai&characterEncoding=utf8}
+    username: ${ICBC_DB_USERNAME:icbc_db123}
+    password: "icbc123!"
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 1
+      connection-timeout: 10000
   jackson:
     time-zone: Asia/Shanghai
-# 数据库确认后在此配置 datasource、JPA/MyBatis 与迁移脚本。
 app:
   collection:
     cron: "0 0 9 * * *"

@@ -9,4 +9,4 @@ cd backend; mvn spring-boot:run
 cd frontend; npm install; npm run dev
 ```
 
-数据库方案待确认后，将在 `backend/src/main/resources/application.yml` 中补充连接配置并接入持久化实体。
+数据库连接信息已写入后端配置；地址和账号仍可通过 `ICBC_DB_URL`、`ICBC_DB_USERNAME` 环境变量覆盖。
