@@ -1,0 +1,56 @@
+.mail-modal > header {
+  align-items: center;
+}
+
+.task-status.archived {
+  background: #edf0f3;
+  color: #526475;
+}
+
+.mail-modal > header h2 {
+  margin: 0;
+}
+
+.mail-recipient-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mail-recipient-actions .outline-button {
+  padding: 7px 11px;
+  font-size: 12px;
+}
+
+.recipient-add-collapsed {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.recipient-add-collapsed > div {
+  grid-template-columns: 1fr 1.8fr auto;
+}
+
+.recipient-row-refined {
+  grid-template-columns: 22px 36px 1fr;
+}
+
+.recipient-row-refined small {
+  font-size: 12px;
+}
+
+@media (max-width: 680px) {
+  .mail-recipient-head {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .mail-recipient-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+
+  .recipient-add-collapsed > div {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,12 +1,19 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
+const route = useRoute()
 const router = useRouter()
 const canEdit = computed(() => auth.user?.roleCode === 'INFO_MANAGER')
 const isFinalReviewer = computed(() => auth.user?.roleCode === 'DEPT_MANAGER')
+const selectedReport = computed(() => ({
+  taskId: route.params.taskId,
+  title: route.query.title || '每日资讯摘要',
+  date: route.query.date || '待确认',
+  versionNo: route.query.versionNo || '1'
+}))
 const sensitiveWords = ['绝对安全', '保证收益', '内幕消息', '暴涨', '稳赚不赔', '重大利好']
 const dataChecks = [
   { field: '成交额环比', draft: '7.2%', source: '6.8%', detail: '草稿“成交额环比”为 7.2%，原始资讯为 6.8%。' },
@@ -22,6 +29,11 @@ const draftEditor = ref(null)
 const sourcePanel = ref(null)
 const syncLock = ref(false)
 const hoverBubble = ref(null)
+const dirty = ref(false)
+const saving = ref(false)
+const saveNotice = ref('')
+const leaveDialogVisible = ref(false)
+const lastDraftPayload = ref(null)
 let hoverTimer
 
 function syncScroll(side) {
@@ -33,6 +45,7 @@ function syncScroll(side) {
   requestAnimationFrame(() => { syncLock.value = false })
 }
 function persistDraft() { draft.value = draftEditor.value?.innerHTML || draft.value }
+function markDirty() { dirty.value = true; saveNotice.value = '' }
 function handleDraftInput() {
   const node = window.getSelection()?.anchorNode
   const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node
@@ -43,6 +56,7 @@ function handleDraftInput() {
     paragraph.dataset.tooltip = changeInfo
   }
   persistDraft()
+  markDirty()
 }
 function captureSelection() { selectedText.value = window.getSelection()?.toString().trim() || '' }
 function wrapSelection(className, tooltip, annotationId = null) {
@@ -56,6 +70,7 @@ function wrapSelection(className, tooltip, annotationId = null) {
   try { range.surroundContents(marker) } catch { return false }
   selection.removeAllRanges(); selection.addRange(range)
   persistDraft()
+  markDirty()
   return true
 }
 function markRed() { if (wrapSelection('manual-red', `人工标红；${changeInfo}`)) captureSelection() }
@@ -81,18 +96,43 @@ function showAnnotationBubble(event) {
 }
 function hideAnnotationBubble() { hoverTimer = setTimeout(() => { hoverBubble.value = null }, 120) }
 function keepAnnotationBubble() { clearTimeout(hoverTimer) }
-function reply(annotation) { const content = window.prompt('输入回复内容'); if (content?.trim()) annotation.replies.push(content.trim()) }
-function resolve(annotation) { annotation.resolved = !annotation.resolved }
+function reply(annotation) { const content = window.prompt('输入回复内容'); if (content?.trim()) { annotation.replies.push(content.trim()); markDirty() } }
+function resolve(annotation) { annotation.resolved = !annotation.resolved; markDirty() }
+async function saveDraft() {
+  persistDraft()
+  saving.value = true
+  saveNotice.value = ''
+  const payload = {
+    taskId: selectedReport.value.taskId,
+    status: 'ANNOTATING',
+    draftContent: draft.value,
+    annotations: annotations.value,
+    updatedAt: new Date().toISOString()
+  }
+  try {
+    // 审核草稿接口及数据库接入后，在此提交 payload。
+    // 例如：await http.put(`/review-tasks/${payload.taskId}/draft`, payload)
+    lastDraftPayload.value = payload
+    await Promise.resolve()
+    dirty.value = false
+    saveNotice.value = '草稿已保存'
+    return true
+  } finally { saving.value = false }
+}
 function submitInitialReview() { alert('已提交终审（演示）') }
 function confirmFinalReview() { alert('已确认终审通过（演示）') }
 function returnForRevision() { alert('已退回修改（演示）') }
 function logout() { auth.logout(); router.push('/login') }
+function backToTasks() { router.push('/review-tasks') }
+function requestBackToTasks() { if (canEdit.value && dirty.value) leaveDialogVisible.value = true; else backToTasks() }
+async function saveAndBack() { await saveDraft(); leaveDialogVisible.value = false; backToTasks() }
+function discardAndBack() { dirty.value = false; leaveDialogVisible.value = false; backToTasks() }
 </script>
 
 <template>
   <div class="review-shell">
     <header class="review-header"><div><strong>金融智讯</strong><span>人机协同审核工作台</span></div><div class="review-user"><span class="role-badge">{{ auth.user?.roleName }}</span><span>{{ auth.user?.username }}</span><button class="text-button" @click="logout">退出</button></div></header>
-    <section class="review-context"><div><span class="eyebrow">待审核报告</span><h1>每日资讯摘要 · 2026-08-24</h1><p>报告编号：FI-20260824-001　·　当前环节：{{ isFinalReviewer ? '终审' : '初审' }}　·　{{ canEdit ? '可编辑并留痕' : '只读查看修改痕迹与批注' }}</p></div><div class="context-actions"><button v-if="canEdit" class="outline-button" @click="persistDraft">保存草稿</button><button v-if="canEdit" @click="submitInitialReview">提交终审</button><template v-else><button class="outline-button" @click="returnForRevision">退回</button><button @click="confirmFinalReview">确认终审</button></template></div></section>
+    <section class="review-context"><div><span class="eyebrow">待审核报告 · 任务 #{{ selectedReport.taskId }}</span><h1>{{ selectedReport.title }}</h1><p>报告日期：{{ selectedReport.date }}　·　版本：V{{ selectedReport.versionNo }}　·　当前环节：{{ isFinalReviewer ? '终审' : '初审' }}　·　{{ canEdit ? '可编辑并留痕' : '只读查看修改痕迹与批注' }}</p></div><div class="context-actions"><span v-if="saveNotice" class="draft-save-notice">{{ saveNotice }}</span><button v-if="canEdit" class="outline-button" :disabled="saving" @click="saveDraft">{{ saving ? '保存中…' : '保存草稿' }}</button><button v-if="canEdit" @click="submitInitialReview">提交终审</button><template v-else><button class="outline-button" @click="returnForRevision">退回</button><button @click="confirmFinalReview">确认终审</button></template><button class="outline-button" @click="requestBackToTasks">返回列表</button></div></section>
     <div class="review-legend"><span class="legend-sensitive">敏感词</span><span class="legend-data">数据不一致</span><span class="legend-change">修改/批注</span></div>
     <main class="review-workspace">
       <article class="document-panel draft-panel"><div class="document-title"><div><h2>报告草稿</h2></div><span class="status-dot">{{ canEdit ? '初审中' : '待终审' }}</span></div>
@@ -114,5 +154,6 @@ function logout() { auth.logout(); router.push('/login') }
     </main>
     <div v-if="hoverBubble" class="annotation-bubble" :style="{ left: `${hoverBubble.left}px`, top: `${hoverBubble.top}px` }" @mouseenter="keepAnnotationBubble" @mouseleave="hideAnnotationBubble"><b>批注</b><p>{{ hoverBubble.item.note }}</p><small>{{ hoverBubble.item.replies.length ? `已有 ${hoverBubble.item.replies.length} 条回复` : '暂无回复' }}</small><div><button @click="reply(hoverBubble.item)">回复</button><button @click="resolve(hoverBubble.item)">{{ hoverBubble.item.resolved ? '取消解决' : '解决' }}</button></div></div>
     <footer v-if="isFinalReviewer" class="review-footer"><label>审核意见<input placeholder="填写修改意见或审核说明（选填）"></label><button class="danger-button" @click="returnForRevision">退回修改</button></footer>
+    <Teleport to="body"><div v-if="leaveDialogVisible" class="review-leave-mask" @click.self="leaveDialogVisible = false"><section class="review-leave-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-dialog-title"><h3 id="leave-dialog-title">尚未保存草稿</h3><p>当前报告有未保存的修改，返回列表前是否保存草稿？</p><div class="review-leave-actions"><button class="outline-button" @click="leaveDialogVisible = false">取消</button><button class="outline-button" @click="discardAndBack">不保存返回</button><button :disabled="saving" @click="saveAndBack">{{ saving ? '保存中…' : '保存并返回' }}</button></div></section></div></Teleport>
   </div>
 </template>
