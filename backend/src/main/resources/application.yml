@@ -25,8 +25,20 @@ management:
     health:
       show-details: always
 
+
+# 数据库确认后在此补充 datasource、JPA/MyBatis 与迁移脚本
 app:
   collection:
     cron: "0 0 9 * * *"
   archive:
     retention-days: 30
+  report:
+    output-dir: target/generated-reports
+    news-table: news_pool
+    dify:
+      base-url:
+      api-key:
+      endpoint: /v1/workflows/run
+      response-mode: blocking
+      user: report-module
+      mock-enabled: true
