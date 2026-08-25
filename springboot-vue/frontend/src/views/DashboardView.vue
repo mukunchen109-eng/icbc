@@ -1,2 +1,0 @@
-<script setup>import StatCard from '../components/StatCard.vue'</script>
-<template><h2>工作台</h2><p class="muted">今日金融资讯处理概览</p><div class="grid"><StatCard label="待采集任务" value="0" hint="IPA / Excel 数据源"/><StatCard label="待处理资讯" value="0" hint="清洗、去重、标准化"/><StatCard label="待审核报告" value="0" hint="初审 / 终审"/><StatCard label="已归档报告" value="0" hint="保留不少于 30 天"/></div><div class="panel"><h3>处理流程</h3><p>数据采集 → 数据预处理 → 智能报告生成 → 人机协同审核 → 精准分发 → 归档留痕</p></div></template>
