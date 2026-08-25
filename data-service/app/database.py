@@ -1,10 +1,10 @@
 import os
 from pathlib import Path
+from datetime import date
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
-
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -40,6 +40,7 @@ def check_connection() -> str:
         return connection.execute(
             text("SELECT DATABASE()")
         ).scalar_one()
+
 
 INSERT_NEWS = text(
     """
@@ -125,3 +126,84 @@ def save_articles(articles: list[dict]) -> dict:
         "inserted": inserted,
         "duplicates": len(rows) - inserted,
     }
+
+
+#检查某天是佛已有任务记录，存在任意任务状态都返回true
+def collection_job_exists(target_date: date) -> bool:
+    sql = text(
+        """
+        SELECT 1
+        FROM collection_job
+        WHERE target_date = :target_date
+        LIMIT 1
+        """
+    )
+    with engine.connect() as connection:
+        row = connection.execute(
+            sql,
+            {"target_date": target_date},
+        ).first()
+
+    return row is not None
+
+
+def create_collection_job(target_date: date, trigger_type: str) -> int:
+    sql = text(
+        """
+        INSERT INTO collection_job (
+            target_date,
+            trigger_type,
+            status,
+            message
+        )
+        VALUES (
+            :target_date,
+            :trigger_type,
+            'RUNNING',
+            '开始采集'
+        )
+        """
+    )
+    with engine.begin() as connection:
+        result = connection.execute(
+            sql,
+            {
+                "target_date": target_date,
+                "trigger_type": trigger_type,
+            },
+        )
+    return result.lastrowid
+
+
+def finish_collection_job(
+    task_id: int,
+    status: str,
+    processed_count: int,
+    retry_count: int,
+    message: str,
+):
+    sql = text(
+        """
+        UPDATE collection_job
+        SET status = :status,
+            processed_count = :processed_count,
+            retry_count = :retry_count,
+            message = :message,
+            finished_at = CURRENT_TIMESTAMP
+        WHERE id = :task_id
+        """
+    )
+    with engine.begin() as connection:
+        result = connection.execute(
+            sql,
+            {
+                "task_id": task_id,
+                "status": status,
+                "processed_count": processed_count,
+                "retry_count": retry_count,
+                "message": message,
+            },
+        )
+
+    if result.rowcount != 1:
+        raise RuntimeError(f"没有找到任务记录：{task_id}")

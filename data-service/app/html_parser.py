@@ -2,7 +2,6 @@ import hashlib
 import re
 from bs4 import BeautifulSoup
 
-
 NOISE_PREFIXES = (
     "广告",
     "推广",
@@ -45,6 +44,7 @@ def make_article(
     }
 
 
+#输入一条excel批次，返回多篇文章
 def parse_articles(batch: dict) -> list[dict]:
     soup = BeautifulSoup(batch["raw_html"], "html.parser")
 

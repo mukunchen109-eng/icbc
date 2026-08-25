@@ -1,14 +1,13 @@
 import re
 from datetime import date, datetime
 from pathlib import Path
-
 from openpyxl import load_workbook
-
 
 SHEET_NAME = "结果"
 REQUIRED_COLUMNS = {"id", "text_content", "industry", "area", "title"}
 
 
+#日期统一化
 def parse_date(value) -> date:
     if isinstance(value, datetime):
         return value.date()
@@ -28,11 +27,11 @@ def parse_date(value) -> date:
 
 
 def read_batches(
-    file_path: str | Path,
-    target_date: str | date | None = None,
+    file_path: str|Path,
+    target_date: str|date|None = None,
 ) -> list[dict]:
     path = Path(file_path)
-    if not path.exists():
+    if not path.is_file():
         raise FileNotFoundError(f"找不到Excel文件：{path}")
 
     selected_date = parse_date(target_date) if target_date else None
@@ -44,8 +43,8 @@ def read_batches(
 
         sheet = workbook[SHEET_NAME]
         rows = sheet.iter_rows(values_only=True)
-
         header_row = next(rows, None)
+
         if header_row is None:
             raise ValueError("Excel内容为空")
 
@@ -65,7 +64,7 @@ def read_batches(
                 continue
 
             row = dict(zip(headers, values))
-            batch_date = parse_date(row["title"])
+            batch_date = parse_date(row["title"]) #模拟数据中title列存的日期
 
             if selected_date and batch_date != selected_date:
                 continue
@@ -87,7 +86,6 @@ def read_batches(
                     "area": row["area"],
                 }
             )
-
         return batches
     finally:
         workbook.close()
