@@ -4,7 +4,7 @@
 
 当前阶段不是先接真实 Dify，而是先打通下面这条链路：
 
-数据库查询 -> 后端拼装 content -> mock Dify 返回 -> 生成 Word/PDF -> Apifox 调试
+数据库查询 -> 后端拼装 content -> mock Dify 返回 -> 生成 Word/PDF -> 写入 report_version -> Apifox 调试
 
 所以现在的 Dify 调用默认是 mock 模式。
 
@@ -41,6 +41,36 @@ order by title
 app:
   report:
     news-table: your_table_name
+```
+
+## report_version 写入逻辑
+
+生成完 Word/PDF 后，后端会向 `report_version` 新插入一条记录。
+
+默认表名：
+
+- `report_version`
+
+写入字段：
+
+- `report_id`
+- `report_date`
+- `report_title`
+- `report_content`
+- `word_file_path`
+- `pdf_file_path`
+- `created_at`
+
+对应代码：
+
+- `src/main/java/com/icbc/financialinfo/modules/report/repository/ReportVersionRepository.java`
+
+如果你的实际表名不同，可以改配置：
+
+```yaml
+app:
+  report:
+    report-version-table: your_report_version_table
 ```
 
 ## 接口请求结构
@@ -85,23 +115,6 @@ app:
 }
 ```
 
-其中：
-
-- `news_date`：本次日报目标日期
-- `title`：报告标题
-- `content`：由后端把数据库内容拼装成的长文本
-
-## 为什么不再单独传 `article_count`
-
-因为这个值完全可以在后端代码里确定，没必要再暴露成 Workflow 独立变量。
-
-现在后端会：
-
-1. 查询该日期下的资讯
-2. 统计条数
-3. 把“同日期资讯数量”写入 `content` 头部
-4. 再传给 mock Dify 或真实 Dify
-
 ## mock Dify 逻辑
 
 当前默认开启：
@@ -129,57 +142,4 @@ mock 模式下不会发出真实 HTTP 请求，而是：
 - 接口是否通了
 - 报告是否生成了
 - Word/PDF 是否能下载
-
-## Apifox 建议测试顺序
-
-### 1. 确认数据库里有测试数据
-
-确保目标表里至少有 19 条同一天的数据，例如：
-
-- `news_date = 2026-08-24`
-
-### 2. 调生成接口
-
-请求：
-
-```http
-POST /api/reports/daily-summary
-Content-Type: application/json
-```
-
-请求体：
-
-```json
-{
-  "reportDate": "2026-08-24",
-  "reportTitle": "每日资讯摘要（2026-08-24）"
-}
-```
-
-### 3. 看返回结果
-
-成功时你会拿到：
-
-- `reportId`
-- `content`
-- `wordFile`
-- `pdfFile`
-
-### 4. 再测下载接口
-
-- `GET /api/reports/{reportId}/files/word`
-- `GET /api/reports/{reportId}/files/pdf`
-
-## 当前限制
-
-### 1. 现在是 mock 生成，不是真实大模型
-
-所以当前日报内容只是测试用的模拟文本，不代表真实分析能力。
-
-### 2. 数据库记录不足 19 条会直接报错
-
-这是按你的日报规则做的硬校验。
-
-### 3. 当前只按单表、三个字段查库
-
-如果你后面要扩成多字段、多表联合查询，这一层可以继续扩展。
+- `report_version` 是否写入了文件路径

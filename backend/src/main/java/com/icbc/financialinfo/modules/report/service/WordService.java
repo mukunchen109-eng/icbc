@@ -4,6 +4,8 @@ import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -19,6 +21,7 @@ import java.time.format.DateTimeFormatter;
 public class WordService {
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final Logger log = LoggerFactory.getLogger(WordService.class);
 
     public Path writeDailySummary(Path reportDirectory, String reportId, String reportTitle, LocalDate reportDate, String content) {
         Path outputPath = reportDirectory.resolve(reportId + ".docx");

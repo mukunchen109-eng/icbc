@@ -35,10 +35,11 @@ app:
   report:
     output-dir: target/generated-reports
     news-table: news_pool
+    report-table: generated_report
     dify:
-      base-url:
-      api-key:
+      base-url: https://api.dify.ai
+      api-key: app-wYZsUDq3HLASFrHQOuuk5VXD
       endpoint: /v1/workflows/run
       response-mode: blocking
       user: report-module
-      mock-enabled: true
+      mock-enabled: false

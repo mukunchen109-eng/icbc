@@ -16,6 +16,8 @@ public class ReportProperties {
     private String outputDir = "target/generated-reports";
     @Setter
     private String newsTable = "news_pool";
+    @Setter
+    private String reportTable = "generated_report";
     private final Dify dify = new Dify();
 
     public Path resolveOutputDirectory() {
@@ -34,7 +36,7 @@ public class ReportProperties {
         private String endpoint = "/v1/workflows/run";
         private String responseMode = "blocking";
         private String user = "report-module";
-        private boolean mockEnabled = true;
+        private boolean mockEnabled = false;
 
     }
 }

@@ -6,6 +6,8 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -28,6 +30,7 @@ public class PdfService {
     private static final float TITLE_FONT_SIZE = 15F;
     private static final float META_FONT_SIZE = 9.5F;
     private static final float LEADING = 17F;
+    private static final Logger log = LoggerFactory.getLogger(PdfService.class);
 
     public Path writeDailySummary(Path reportDirectory, String reportId, String reportTitle, LocalDate reportDate, String content) {
         Path outputPath = reportDirectory.resolve(reportId + ".pdf");

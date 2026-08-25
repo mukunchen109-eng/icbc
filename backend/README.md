@@ -15,6 +15,7 @@
 4. 后端把查到的同日期资讯拼成 Dify Workflow 输入
 5. 当前默认使用 mock Dify 调用，方便你用 Apifox 验证整条链路
 6. 生成 `.docx` 和 `.pdf`
+7. 将生成后的文件绝对路径写入 `report_version.word_file_path` 和 `report_version.pdf_file_path`
 
 ## 请求接口
 
@@ -41,12 +42,27 @@
 - `title`
 - `content`
 
-如果你的实际表名不是 `news_pool`，可以在 `application.yml` 里改：
+默认写入报告版本表：
+
+- `report_version`
+
+当前落库逻辑会新插入一条记录，并写入这些字段：
+
+- `report_id`
+- `report_date`
+- `report_title`
+- `report_content`
+- `word_file_path`
+- `pdf_file_path`
+- `created_at`
+
+如果你的实际表名不同，可以在 `application.yml` 里改：
 
 ```yaml
 app:
   report:
     news-table: your_table_name
+    report-version-table: your_report_version_table
 ```
 
 ## Dify Workflow 输入契约
@@ -81,6 +97,7 @@ app:
   report:
     output-dir: target/generated-reports
     news-table: news_pool
+    report-version-table: report_version
     dify:
       base-url: http://your-dify-host
       api-key: your-api-key
@@ -96,6 +113,7 @@ app:
 - `src/main/java/com/icbc/financialinfo/modules/report/service/ReportService.java`
 - `src/main/java/com/icbc/financialinfo/modules/report/service/DifyService.java`
 - `src/main/java/com/icbc/financialinfo/modules/report/repository/NewsPoolRepository.java`
+- `src/main/java/com/icbc/financialinfo/modules/report/repository/ReportVersionRepository.java`
 - `src/main/java/com/icbc/financialinfo/modules/report/model/DifyWorkflowRequest.java`
 
 ## 启动方式
