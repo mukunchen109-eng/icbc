@@ -1,0 +1,6 @@
+/* 独立滚动区域：两列以同一可视高度同步滚动。 */
+.draft-editor{height:559px;min-height:0;flex:none}
+.source-content{height:559px}
+.annotation-mark{background:#fff0b8;padding:1px 2px;position:relative;cursor:help}
+.annotation-bubble{position:fixed;z-index:50;width:290px;padding:12px;border-radius:7px;background:#24394c;color:#fff;box-shadow:0 5px 18px rgba(20,43,63,.3);font-size:13px}.annotation-bubble::before{content:"";position:absolute;top:-6px;left:18px;border:6px solid transparent;border-top:0;border-bottom-color:#24394c}.annotation-bubble p{margin:7px 0;line-height:1.5}.annotation-bubble small{color:#bcd2e5}.annotation-bubble div{display:flex;gap:6px;margin-top:9px}.annotation-bubble button{padding:4px 8px;background:#fff;color:#315875;font-size:12px}
+@media(max-width:900px){.source-content,.draft-editor{height:470px}}
