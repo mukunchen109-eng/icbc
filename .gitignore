@@ -3,6 +3,7 @@
 backend/target/
 frontend/node_modules/
 frontend/dist/
+springboot-vue/
 *.log
 
 # Python data service
@@ -12,3 +13,5 @@ data-service/*.egg-info/
 data-service/.pytest_cache/
 data-service/.env
 *.pyc
+
+work/
