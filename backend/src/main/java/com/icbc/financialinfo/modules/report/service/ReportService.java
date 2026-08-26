@@ -294,7 +294,7 @@ public class ReportService {
         for (int i = 0; i < records.size(); i++) {
             NewsPoolRecord record = records.get(i);
             articles.add(new DifyNewsArticleInput(
-                    String.valueOf(i + 1),
+                    nullSafe(record.dailySeq()),
                     nullSafe(record.title()),
                     nullSafe(record.content()),
                     nullSafe(record.industry()),
