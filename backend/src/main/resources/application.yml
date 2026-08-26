@@ -1,32 +1,25 @@
 server:
   port: 8080
-
 spring:
   application:
     name: financial-intelligence-system
-
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://icbc-db123.mysql.polardb.rds.aliyuncs.com:3306/db1?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
-    username: icbc_db123
-    password: icbc123!
-
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 1
+      connection-timeout: 10000
   jackson:
     time-zone: Asia/Shanghai
-
 mybatis:
   mapper-locations: classpath:mapper/**/*.xml
   type-aliases-package: com.icbc.financialinfo.modules
   configuration:
     map-underscore-to-camel-case: true
-
 management:
   endpoint:
     health:
       show-details: always
-
-
-# 数据库确认后在此补充 datasource、JPA/MyBatis 与迁移脚本
 app:
   collection:
     cron: "0 0 9 * * *"
