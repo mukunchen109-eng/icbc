@@ -9,8 +9,8 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Date;
 import java.sql.Timestamp;
-import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.regex.Pattern;
 
 @Repository
@@ -18,6 +18,7 @@ public class ReportVersionRepository {
 
     private static final Pattern TABLE_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]+$");
     private static final Logger log = LoggerFactory.getLogger(ReportVersionRepository.class);
+    private static final long FIXED_REPORT_ID = 1L;
 
     private final JdbcTemplate jdbcTemplate;
     private final ReportProperties reportProperties;
@@ -27,58 +28,73 @@ public class ReportVersionRepository {
         this.reportProperties = reportProperties;
     }
 
-    public void insertReportRecord(
-            String reportId,
+    public long upsertReportRecord(
             LocalDate reportDate,
             String reportTitle,
-            int articleCount,
-            String contentSnapshot,
-            String wordFilePath,
-            String pdfFilePath,
-            Instant createdAt
+            String status,
+            int locked,
+            Long lockedBy,
+            LocalDateTime lockedAt,
+            LocalDateTime createdAt,
+            LocalDateTime updatedAt
     ) {
         String tableName = resolveTableName();
         String sql = "insert into " + tableName
-                + " (report_id, report_date, report_title, article_count, content_snapshot, word_file_path, pdf_file_path, created_at) "
-                + "values (?, ?, ?, ?, ?, ?, ?, ?)";
+                + " (id, report_date, report_title, status, locked, locked_by, locked_at, created_at, updated_at) "
+                + "values (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                + "on duplicate key update "
+                + "report_date = values(report_date), "
+                + "report_title = values(report_title), "
+                + "status = values(status), "
+                + "locked = values(locked), "
+                + "locked_by = values(locked_by), "
+                + "locked_at = values(locked_at), "
+                + "updated_at = values(updated_at)";
+
         Object[] params = {
-                reportId,
+                FIXED_REPORT_ID,
                 Date.valueOf(reportDate),
                 reportTitle,
-                articleCount,
-                contentSnapshot,
-                wordFilePath,
-                pdfFilePath,
-                Timestamp.from(createdAt)
+                normalizeStatus(status),
+                locked,
+                lockedBy,
+                lockedAt == null ? null : Timestamp.valueOf(lockedAt),
+                Timestamp.valueOf(createdAt),
+                Timestamp.valueOf(updatedAt)
         };
 
         try {
             log.debug(
-                    "准备写入 generated_report: table={}, reportId={}, reportDate={}, reportTitle={}, articleCount={}, wordFilePath={}, pdfFilePath={}, createdAt={}",
+                    "准备写入 report: table={}, fixedId={}, reportDate={}, reportTitle={}, status={}, locked={}, lockedBy={}, lockedAt={}, createdAt={}, updatedAt={}",
                     tableName,
-                    reportId,
+                    FIXED_REPORT_ID,
                     reportDate,
                     reportTitle,
-                    articleCount,
-                    wordFilePath,
-                    pdfFilePath,
-                    createdAt
+                    normalizeStatus(status),
+                    locked,
+                    lockedBy,
+                    lockedAt,
+                    createdAt,
+                    updatedAt
             );
             jdbcTemplate.update(sql, params);
-            log.debug("写入 generated_report 成功: table={}, reportId={}", tableName, reportId);
+            log.debug("写入 report 成功: table={}, fixedId={}", tableName, FIXED_REPORT_ID);
+            return FIXED_REPORT_ID;
         } catch (DataAccessException ex) {
             Throwable rootCause = rootCauseOf(ex);
             log.error(
-                    "写入 generated_report 失败: table={}, sql={}, reportId={}, reportDate={}, reportTitle={}, articleCount={}, wordFilePath={}, pdfFilePath={}, createdAt={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
+                    "写入 report 失败: table={}, sql={}, fixedId={}, reportDate={}, reportTitle={}, status={}, locked={}, lockedBy={}, lockedAt={}, createdAt={}, updatedAt={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
                     tableName,
                     sql,
-                    reportId,
+                    FIXED_REPORT_ID,
                     reportDate,
                     reportTitle,
-                    articleCount,
-                    wordFilePath,
-                    pdfFilePath,
+                    normalizeStatus(status),
+                    locked,
+                    lockedBy,
+                    lockedAt,
                     createdAt,
+                    updatedAt,
                     ex.getClass().getName(),
                     rootCause.getClass().getName(),
                     rootCause.getMessage(),
@@ -88,16 +104,18 @@ public class ReportVersionRepository {
         } catch (RuntimeException ex) {
             Throwable rootCause = rootCauseOf(ex);
             log.error(
-                    "写入 generated_report 发生未预期异常: table={}, sql={}, reportId={}, reportDate={}, reportTitle={}, articleCount={}, wordFilePath={}, pdfFilePath={}, createdAt={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
+                    "写入 report 发生未预期异常: table={}, sql={}, fixedId={}, reportDate={}, reportTitle={}, status={}, locked={}, lockedBy={}, lockedAt={}, createdAt={}, updatedAt={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
                     tableName,
                     sql,
-                    reportId,
+                    FIXED_REPORT_ID,
                     reportDate,
                     reportTitle,
-                    articleCount,
-                    wordFilePath,
-                    pdfFilePath,
+                    normalizeStatus(status),
+                    locked,
+                    lockedBy,
+                    lockedAt,
                     createdAt,
+                    updatedAt,
                     ex.getClass().getName(),
                     rootCause.getClass().getName(),
                     rootCause.getMessage(),
@@ -105,6 +123,10 @@ public class ReportVersionRepository {
             );
             throw ex;
         }
+    }
+
+    private String normalizeStatus(String status) {
+        return status == null || status.isBlank() ? "INITIAL_REVIEW" : status.trim();
     }
 
     private String resolveTableName() {

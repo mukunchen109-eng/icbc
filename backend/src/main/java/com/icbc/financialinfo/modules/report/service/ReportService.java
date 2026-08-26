@@ -1,6 +1,7 @@
 package com.icbc.financialinfo.modules.report.service;
 
 import com.icbc.financialinfo.modules.report.model.DifyWorkflowRequest;
+import com.icbc.financialinfo.modules.report.model.DifySummaryArticle;
 import com.icbc.financialinfo.modules.report.model.DifyNewsArticleInput;
 import com.icbc.financialinfo.modules.report.model.GenerateDailySummaryRequest;
 import com.icbc.financialinfo.modules.report.model.GeneratedReportResponse;
@@ -9,6 +10,7 @@ import com.icbc.financialinfo.modules.report.model.ReportFileDescriptor;
 import com.icbc.financialinfo.modules.report.model.ReportListItem;
 import com.icbc.financialinfo.modules.report.properties.ReportProperties;
 import com.icbc.financialinfo.modules.report.repository.NewsPoolRepository;
+import com.icbc.financialinfo.modules.report.repository.ReportArticleRepository;
 import com.icbc.financialinfo.modules.report.repository.ReportVersionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +22,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -34,7 +37,10 @@ public class ReportService {
 
     private static final int MIN_REQUIRED_ARTICLES = 1;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-    private static final String REPORT_FILE_BASE_NAME = "每日资讯摘要";
+    private static final DateTimeFormatter FILE_DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final String REPORT_FILE_BASE_NAME = "每日经济金融信息";
+    private static final String REPORT_STATUS = "INITIAL_REVIEW";
+    private static final int REPORT_LOCKED = 0;
     private static final Logger log = LoggerFactory.getLogger(ReportService.class);
 
     private final DifyService difyService;
@@ -43,6 +49,7 @@ public class ReportService {
     private final ReportProperties reportProperties;
     private final NewsPoolRepository newsPoolRepository;
     private final ReportVersionRepository reportVersionRepository;
+    private final ReportArticleRepository reportArticleRepository;
     private final Map<String, StoredReport> reports = new ConcurrentHashMap<>();
 
     public ReportService(
@@ -51,7 +58,8 @@ public class ReportService {
             PdfService pdfService,
             ReportProperties reportProperties,
             NewsPoolRepository newsPoolRepository,
-            ReportVersionRepository reportVersionRepository
+            ReportVersionRepository reportVersionRepository,
+            ReportArticleRepository reportArticleRepository
     ) {
         this.difyService = difyService;
         this.wordService = wordService;
@@ -59,6 +67,7 @@ public class ReportService {
         this.reportProperties = reportProperties;
         this.newsPoolRepository = newsPoolRepository;
         this.reportVersionRepository = reportVersionRepository;
+        this.reportArticleRepository = reportArticleRepository;
     }
 
     public List<ReportListItem> listReports() {
@@ -75,37 +84,40 @@ public class ReportService {
     public GeneratedReportResponse generateDailySummary(GenerateDailySummaryRequest request) {
         LocalDate reportDate = request.reportDate();
         String newsDate = reportDate.format(DATE_FORMATTER);
-        String reportTitle = request.reportTitle() == null || request.reportTitle().isBlank()
-                ? "Daily summary - " + newsDate
-                : request.reportTitle().trim();
 
         List<NewsPoolRecord> records = newsPoolRepository.findByNewsDate(newsDate);
         validateRecords(newsDate, records);
 
-        List<DifyNewsArticleInput> articles = records.stream()
-                .map(this::toDifyArticleInput)
-                .toList();
+        String reportFileBaseName = buildReportFileBaseName(reportDate);
+        String reportTitle = request.reportTitle() == null || request.reportTitle().isBlank()
+                ? reportFileBaseName
+                : request.reportTitle().trim();
+
+        List<DifyNewsArticleInput> articles = buildDifyArticles(records);
         DifyWorkflowRequest workflowRequest = new DifyWorkflowRequest(articles);
         String reportId = UUID.randomUUID().toString().replace("-", "");
         Path reportDirectory = prepareReportDirectory(newsDate);
         String generatedContent = difyService.generateDailySummary(workflowRequest, reportDirectory);
         Path wordPath = wordService.writeDailySummary(
                 reportDirectory,
-                REPORT_FILE_BASE_NAME,
+                reportFileBaseName,
                 reportTitle,
                 reportDate,
                 generatedContent
         );
         Path pdfPath = pdfService.writeDailySummary(
                 reportDirectory,
-                REPORT_FILE_BASE_NAME,
+                reportFileBaseName,
                 reportTitle,
                 reportDate,
                 generatedContent
         );
         Instant generatedAt = Instant.now();
+        LocalDateTime now = LocalDateTime.now();
+        List<DifySummaryArticle> summaryArticles = DifySummaryArticleParser.parseSelectedArticles(generatedContent);
 
-        persistReportRecord(reportId, reportDate, reportTitle, records.size(), generatedContent, wordPath, pdfPath, generatedAt);
+        long persistedReportId = persistReportRecord(reportDate, reportTitle, now);
+        persistReportArticles(persistedReportId, summaryArticles, now);
 
         StoredReport report = new StoredReport(
                 reportId,
@@ -166,38 +178,28 @@ public class ReportService {
         }
     }
 
-    private void persistReportRecord(
-            String reportId,
+    private long persistReportRecord(
             LocalDate reportDate,
             String reportTitle,
-            int articleCount,
-            String contentSnapshot,
-            Path wordPath,
-            Path pdfPath,
-            Instant generatedAt
+            LocalDateTime now
     ) {
         try {
-            reportVersionRepository.insertReportRecord(
-                    reportId,
+            return reportVersionRepository.upsertReportRecord(
                     reportDate,
                     reportTitle,
-                    articleCount,
-                    contentSnapshot,
-                    wordPath.toAbsolutePath().toString(),
-                    pdfPath.toAbsolutePath().toString(),
-                    generatedAt
+                    REPORT_STATUS,
+                    REPORT_LOCKED,
+                    null,
+                    null,
+                    now,
+                    now
             );
         } catch (DataAccessException ex) {
             Throwable rootCause = rootCauseOf(ex);
             log.error(
-                    "Failed to write generated_report: reportId={}, reportDate={}, reportTitle={}, articleCount={}, wordPath={}, pdfPath={}, generatedAt={}, table={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
-                    reportId,
+                    "Failed to write report table: reportDate={}, reportTitle={}, table={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
                     reportDate,
                     reportTitle,
-                    articleCount,
-                    wordPath.toAbsolutePath(),
-                    pdfPath.toAbsolutePath(),
-                    generatedAt,
                     reportProperties.getReportTable(),
                     ex.getClass().getName(),
                     rootCause.getClass().getName(),
@@ -206,20 +208,15 @@ public class ReportService {
             );
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to write generated_report; check server logs for the database error details",
+                    "Failed to write report table; check server logs for the database error details",
                     ex
             );
         } catch (RuntimeException ex) {
             Throwable rootCause = rootCauseOf(ex);
             log.error(
-                    "Unexpected error while writing generated_report: reportId={}, reportDate={}, reportTitle={}, articleCount={}, wordPath={}, pdfPath={}, generatedAt={}, table={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
-                    reportId,
+                    "Unexpected error while writing report table: reportDate={}, reportTitle={}, table={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
                     reportDate,
                     reportTitle,
-                    articleCount,
-                    wordPath.toAbsolutePath(),
-                    pdfPath.toAbsolutePath(),
-                    generatedAt,
                     reportProperties.getReportTable(),
                     ex.getClass().getName(),
                     rootCause.getClass().getName(),
@@ -228,7 +225,47 @@ public class ReportService {
             );
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to write generated_report; check server logs for the exception details",
+                    "Failed to write report table; check server logs for the exception details",
+                    ex
+            );
+        }
+    }
+
+    private void persistReportArticles(long reportId, List<DifySummaryArticle> summaryArticles, LocalDateTime now) {
+        try {
+            reportArticleRepository.insertArticles(reportId, summaryArticles, now);
+        } catch (DataAccessException ex) {
+            Throwable rootCause = rootCauseOf(ex);
+            log.error(
+                    "Failed to write report_article table: reportId={}, articleCount={}, table={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
+                    reportId,
+                    summaryArticles == null ? 0 : summaryArticles.size(),
+                    reportProperties.getReportArticleTable(),
+                    ex.getClass().getName(),
+                    rootCause.getClass().getName(),
+                    rootCause.getMessage(),
+                    ex
+            );
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to write report_article table; check server logs for the database error details",
+                    ex
+            );
+        } catch (RuntimeException ex) {
+            Throwable rootCause = rootCauseOf(ex);
+            log.error(
+                    "Unexpected error while writing report_article table: reportId={}, articleCount={}, table={}, exceptionType={}, rootCauseType={}, rootCauseMessage={}",
+                    reportId,
+                    summaryArticles == null ? 0 : summaryArticles.size(),
+                    reportProperties.getReportArticleTable(),
+                    ex.getClass().getName(),
+                    rootCause.getClass().getName(),
+                    rootCause.getMessage(),
+                    ex
+            );
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to write report_article table; check server logs for the exception details",
                     ex
             );
         }
@@ -244,7 +281,7 @@ public class ReportService {
 
     private DifyNewsArticleInput toDifyArticleInput(NewsPoolRecord record) {
         return new DifyNewsArticleInput(
-                nullSafe(record.contentHash()),
+                nullSafe(record.dailySeq()),
                 nullSafe(record.title()),
                 nullSafe(record.content()),
                 nullSafe(record.industry()),
@@ -252,8 +289,27 @@ public class ReportService {
         );
     }
 
+    private List<DifyNewsArticleInput> buildDifyArticles(List<NewsPoolRecord> records) {
+        List<DifyNewsArticleInput> articles = new java.util.ArrayList<>(records.size());
+        for (int i = 0; i < records.size(); i++) {
+            NewsPoolRecord record = records.get(i);
+            articles.add(new DifyNewsArticleInput(
+                    String.valueOf(i + 1),
+                    nullSafe(record.title()),
+                    nullSafe(record.content()),
+                    nullSafe(record.industry()),
+                    nullSafe(record.area())
+            ));
+        }
+        return List.copyOf(articles);
+    }
+
     private String nullSafe(String value) {
         return value == null || value.isBlank() ? "N/A" : value.trim();
+    }
+
+    private String buildReportFileBaseName(LocalDate reportDate) {
+        return REPORT_FILE_BASE_NAME + "-" + reportDate.format(FILE_DATE_FORMATTER);
     }
 
     private GeneratedReportResponse toResponse(StoredReport report) {

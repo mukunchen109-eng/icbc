@@ -35,7 +35,8 @@ app:
   report:
     output-dir: target/generated-reports
     news-table: news_pool
-    report-table: generated_report
+    report-table: report
+    report-article-table: report_article
     dify:
       base-url: https://api.dify.ai
       api-key: app-wYZsUDq3HLASFrHQOuuk5VXD

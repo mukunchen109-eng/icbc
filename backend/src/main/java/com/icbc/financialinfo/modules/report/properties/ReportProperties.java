@@ -18,6 +18,8 @@ public class ReportProperties {
     private String newsTable = "news_pool";
     @Setter
     private String reportTable = "generated_report";
+    @Setter
+    private String reportArticleTable = "report_article";
     private final Dify dify = new Dify();
 
     public Path resolveOutputDirectory() {

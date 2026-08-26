@@ -6,6 +6,6 @@ public record NewsPoolRecord(
         String content,
         String industry,
         String area,
-        String contentHash
+        String dailySeq
 ) {
 }

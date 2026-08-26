@@ -23,7 +23,7 @@ public class NewsPoolRepository {
 
     public List<NewsPoolRecord> findByNewsDate(String newsDate) {
         String tableName = resolveTableName();
-        String sql = "select news_date, title, content, industry, area, content_hash from " + tableName + " where news_date = ? order by title";
+        String sql = "select news_date, title, content, industry, area, daily_seq from " + tableName + " where news_date = ? order by title";
         return jdbcTemplate.query(
                 sql,
                 (rs, rowNum) -> new NewsPoolRecord(
@@ -32,7 +32,7 @@ public class NewsPoolRepository {
                         rs.getString("content"),
                         rs.getString("industry"),
                         rs.getString("area"),
-                        rs.getString("content_hash")
+                        rs.getString("daily_seq")
                 ),
                 newsDate
         );
