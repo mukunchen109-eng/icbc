@@ -1,6 +1,7 @@
 package com.icbc.financialinfo.modules.report.service;
 
 import com.icbc.financialinfo.modules.report.model.DifyWorkflowRequest;
+import com.icbc.financialinfo.modules.report.model.DifyNewsArticleInput;
 import com.icbc.financialinfo.modules.report.model.GenerateDailySummaryRequest;
 import com.icbc.financialinfo.modules.report.model.GeneratedReportResponse;
 import com.icbc.financialinfo.modules.report.model.NewsPoolRecord;
@@ -33,6 +34,7 @@ public class ReportService {
 
     private static final int MIN_REQUIRED_ARTICLES = 1;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final String REPORT_FILE_BASE_NAME = "每日资讯摘要";
     private static final Logger log = LoggerFactory.getLogger(ReportService.class);
 
     private final DifyService difyService;
@@ -80,17 +82,27 @@ public class ReportService {
         List<NewsPoolRecord> records = newsPoolRepository.findByNewsDate(newsDate);
         validateRecords(newsDate, records);
 
-        DifyWorkflowRequest workflowRequest = new DifyWorkflowRequest(
-                newsDate,
-                reportTitle,
-                buildContent(newsDate, records)
-        );
-        String generatedContent = difyService.generateDailySummary(workflowRequest);
-
+        List<DifyNewsArticleInput> articles = records.stream()
+                .map(this::toDifyArticleInput)
+                .toList();
+        DifyWorkflowRequest workflowRequest = new DifyWorkflowRequest(articles);
         String reportId = UUID.randomUUID().toString().replace("-", "");
-        Path reportDirectory = prepareReportDirectory(reportId);
-        Path wordPath = wordService.writeDailySummary(reportDirectory, reportId, reportTitle, reportDate, generatedContent);
-        Path pdfPath = pdfService.writeDailySummary(reportDirectory, reportId, reportTitle, reportDate, generatedContent);
+        Path reportDirectory = prepareReportDirectory(newsDate);
+        String generatedContent = difyService.generateDailySummary(workflowRequest, reportDirectory);
+        Path wordPath = wordService.writeDailySummary(
+                reportDirectory,
+                REPORT_FILE_BASE_NAME,
+                reportTitle,
+                reportDate,
+                generatedContent
+        );
+        Path pdfPath = pdfService.writeDailySummary(
+                reportDirectory,
+                REPORT_FILE_BASE_NAME,
+                reportTitle,
+                reportDate,
+                generatedContent
+        );
         Instant generatedAt = Instant.now();
 
         persistReportRecord(reportId, reportDate, reportTitle, records.size(), generatedContent, wordPath, pdfPath, generatedAt);
@@ -143,9 +155,9 @@ public class ReportService {
         }
     }
 
-    private Path prepareReportDirectory(String reportId) {
+    private Path prepareReportDirectory(String newsDate) {
         Path outputDirectory = reportProperties.resolveOutputDirectory();
-        Path reportDirectory = outputDirectory.resolve(reportId);
+        Path reportDirectory = outputDirectory.resolve(newsDate);
         try {
             Files.createDirectories(reportDirectory);
             return reportDirectory;
@@ -230,20 +242,14 @@ public class ReportService {
         return current;
     }
 
-    private String buildContent(String newsDate, List<NewsPoolRecord> records) {
-        StringBuilder builder = new StringBuilder();
-        builder.append("Target report date: ").append(newsDate).append(System.lineSeparator());
-        builder.append("Article count: ").append(records.size()).append(System.lineSeparator());
-        builder.append("Source articles:").append(System.lineSeparator()).append(System.lineSeparator());
-
-        int index = 1;
-        for (NewsPoolRecord record : records) {
-            builder.append("[Article ").append(index++).append("]").append(System.lineSeparator());
-            builder.append("Title: ").append(nullSafe(record.title())).append(System.lineSeparator());
-            builder.append("Date: ").append(nullSafe(record.newsDate())).append(System.lineSeparator());
-            builder.append("Content: ").append(nullSafe(record.content())).append(System.lineSeparator()).append(System.lineSeparator());
-        }
-        return builder.toString();
+    private DifyNewsArticleInput toDifyArticleInput(NewsPoolRecord record) {
+        return new DifyNewsArticleInput(
+                nullSafe(record.contentHash()),
+                nullSafe(record.title()),
+                nullSafe(record.content()),
+                nullSafe(record.industry()),
+                nullSafe(record.area())
+        );
     }
 
     private String nullSafe(String value) {

@@ -1,17 +1,21 @@
 package com.icbc.financialinfo.modules.report.service;
 
+import com.icbc.financialinfo.modules.report.service.ReportTextFormatter.Block;
+import com.icbc.financialinfo.modules.report.service.ReportTextFormatter.BlockType;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.apache.pdfbox.pdmodel.graphics.state.RenderingMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.awt.Color;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -24,16 +28,19 @@ import java.util.List;
 @Service
 public class PdfService {
 
+    private static final String FILE_NAME = "每日资讯摘要";
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final float PAGE_MARGIN = 48F;
     private static final float BODY_FONT_SIZE = 11F;
-    private static final float TITLE_FONT_SIZE = 15F;
+    private static final float HEADING_FONT_SIZE = 14F;
+    private static final float SUBHEADING_FONT_SIZE = 12F;
     private static final float META_FONT_SIZE = 9.5F;
     private static final float LEADING = 17F;
     private static final Logger log = LoggerFactory.getLogger(PdfService.class);
 
-    public Path writeDailySummary(Path reportDirectory, String reportId, String reportTitle, LocalDate reportDate, String content) {
-        Path outputPath = reportDirectory.resolve(reportId + ".pdf");
+    public Path writeDailySummary(Path reportDirectory, String fileBaseName, String reportTitle, LocalDate reportDate, String content) {
+        String resolvedFileName = fileBaseName == null || fileBaseName.isBlank() ? FILE_NAME : fileBaseName.trim();
+        Path outputPath = reportDirectory.resolve(resolvedFileName + ".pdf");
         try (PDDocument document = new PDDocument()) {
             PDFont font = loadChineseFont(document);
             List<LineSpec> lines = buildLines(reportTitle, reportDate, content, font);
@@ -49,63 +56,82 @@ public class PdfService {
         PDPage page = new PDPage(PDRectangle.A4);
         document.addPage(page);
         float y = page.getMediaBox().getHeight() - PAGE_MARGIN;
-        PDPageContentStream stream = new PDPageContentStream(document, page);
 
-        for (LineSpec line : lines) {
-            if (y <= PAGE_MARGIN) {
-                stream.close();
-                page = new PDPage(PDRectangle.A4);
-                document.addPage(page);
-                stream = new PDPageContentStream(document, page);
-                y = page.getMediaBox().getHeight() - PAGE_MARGIN;
-            }
+        PDPageContentStream currentStream = new PDPageContentStream(document, page);
+        try {
+            for (LineSpec line : lines) {
+                if (y <= PAGE_MARGIN) {
+                    currentStream.close();
+                    page = new PDPage(PDRectangle.A4);
+                    document.addPage(page);
+                    currentStream = new PDPageContentStream(document, page);
+                    y = page.getMediaBox().getHeight() - PAGE_MARGIN;
+                }
 
-            if (!line.text().isEmpty()) {
-                stream.beginText();
-                stream.setFont(line.font(), line.fontSize());
-                stream.newLineAtOffset(PAGE_MARGIN, y);
-                stream.showText(line.text());
-                stream.endText();
+                if (!line.text().isEmpty()) {
+                    currentStream.beginText();
+                    currentStream.setRenderingMode(RenderingMode.FILL);
+                    currentStream.setFont(line.font(), line.fontSize());
+                    if (line.color() != null) {
+                        currentStream.setNonStrokingColor(line.color());
+                    } else {
+                        currentStream.setNonStrokingColor(Color.BLACK);
+                    }
+                    currentStream.newLineAtOffset(PAGE_MARGIN + line.indent(), y);
+                    currentStream.showText(line.text());
+                    currentStream.endText();
+                }
+                y -= line.leading();
             }
-            y -= line.leading();
+        } finally {
+            currentStream.close();
         }
-
-        stream.close();
     }
 
     private List<LineSpec> buildLines(String reportTitle, LocalDate reportDate, String content, PDFont font) throws IOException {
         float width = PDRectangle.A4.getWidth() - PAGE_MARGIN * 2;
         List<LineSpec> result = new ArrayList<>();
-        for (String line : wrapText(reportTitle, font, TITLE_FONT_SIZE, width)) {
-            result.add(new LineSpec(line, font, TITLE_FONT_SIZE, LEADING));
+        for (String line : wrapText(reportTitle, font, HEADING_FONT_SIZE, width, 0)) {
+            result.add(new LineSpec(line, font, HEADING_FONT_SIZE, LEADING, 0, Color.BLACK));
         }
-        result.add(new LineSpec("", font, BODY_FONT_SIZE, LEADING * 0.6F));
-        result.add(new LineSpec("生成日期：" + reportDate.format(DATE_FORMATTER), font, META_FONT_SIZE, LEADING));
-        result.add(new LineSpec("", font, BODY_FONT_SIZE, LEADING * 0.6F));
+        result.add(new LineSpec("", font, BODY_FONT_SIZE, LEADING * 0.6F, 0, Color.BLACK));
+        result.add(new LineSpec("生成日期：" + reportDate.format(DATE_FORMATTER), font, META_FONT_SIZE, LEADING, 0, new Color(102, 102, 102)));
+        result.add(new LineSpec("", font, BODY_FONT_SIZE, LEADING * 0.6F, 0, Color.BLACK));
 
-        String normalizedContent = content.replace("```", "").replace("\r\n", "\n").trim();
-        for (String paragraph : normalizedContent.split("\\n\\s*\\n")) {
-            if (paragraph.isBlank()) {
-                continue;
+        for (Block block : ReportTextFormatter.format(content)) {
+            switch (block.type()) {
+                case BLANK -> result.add(new LineSpec("", font, BODY_FONT_SIZE, LEADING * 0.6F, 0, Color.BLACK));
+                case HEADING -> addWrappedBlock(result, block.text(), font, HEADING_FONT_SIZE, LEADING + 1F, width, 0, Color.BLACK);
+                case SUBHEADING -> addWrappedBlock(result, block.text(), font, SUBHEADING_FONT_SIZE, LEADING, width, 0, Color.BLACK);
+                case BULLET -> addWrappedBlock(result, "• " + block.text(), font, BODY_FONT_SIZE, LEADING, width, 14F, Color.BLACK);
+                case QUOTE -> addWrappedBlock(result, block.text(), font, BODY_FONT_SIZE, LEADING, width, 14F, new Color(70, 70, 70));
+                case META -> addWrappedBlock(result, block.text(), font, META_FONT_SIZE, LEADING, width, 0, new Color(102, 102, 102));
+                case BODY -> addWrappedBlock(result, block.text(), font, BODY_FONT_SIZE, LEADING, width, 0, Color.BLACK);
             }
-            float fontSize = isHeading(paragraph) ? 12.5F : BODY_FONT_SIZE;
-            for (String line : wrapText(paragraph.trim(), font, fontSize, width)) {
-                result.add(new LineSpec(line, font, fontSize, LEADING));
-            }
-            result.add(new LineSpec("", font, BODY_FONT_SIZE, LEADING * 0.6F));
         }
         return result;
     }
 
-    private boolean isHeading(String text) {
-        String normalized = text.trim();
-        return normalized.startsWith("一、") || normalized.startsWith("二、") || normalized.startsWith("三、")
-                || (normalized.startsWith("《") && normalized.endsWith("》"));
+    private void addWrappedBlock(
+            List<LineSpec> result,
+            String text,
+            PDFont font,
+            float fontSize,
+            float leading,
+            float width,
+            float indent,
+            Color color
+    ) throws IOException {
+        for (String line : wrapText(text, font, fontSize, width, indent)) {
+            result.add(new LineSpec(line, font, fontSize, leading, indent, color));
+        }
+        result.add(new LineSpec("", font, BODY_FONT_SIZE, LEADING * 0.6F, 0, Color.BLACK));
     }
 
-    private List<String> wrapText(String text, PDFont font, float fontSize, float maxWidth) throws IOException {
+    private List<String> wrapText(String text, PDFont font, float fontSize, float maxWidth, float indent) throws IOException {
         List<String> lines = new ArrayList<>();
         StringBuilder currentLine = new StringBuilder();
+        float availableWidth = Math.max(1F, maxWidth - indent);
 
         for (String rawLine : text.split("\\n")) {
             if (rawLine.isBlank()) {
@@ -117,7 +143,7 @@ public class PdfService {
                 char currentChar = rawLine.charAt(i);
                 String candidate = currentLine + String.valueOf(currentChar);
                 float candidateWidth = font.getStringWidth(candidate) / 1000 * fontSize;
-                if (candidateWidth > maxWidth && currentLine.length() > 0) {
+                if (candidateWidth > availableWidth && currentLine.length() > 0) {
                     lines.add(currentLine.toString());
                     currentLine.setLength(0);
                 }
@@ -149,6 +175,6 @@ public class PdfService {
         throw new IOException("未找到可用的中文字体文件，无法生成 PDF");
     }
 
-    private record LineSpec(String text, PDFont font, float fontSize, float leading) {
+    private record LineSpec(String text, PDFont font, float fontSize, float leading, float indent, Color color) {
     }
 }

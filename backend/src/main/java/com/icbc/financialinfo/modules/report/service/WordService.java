@@ -1,5 +1,7 @@
 package com.icbc.financialinfo.modules.report.service;
 
+import com.icbc.financialinfo.modules.report.service.ReportTextFormatter.Block;
+import com.icbc.financialinfo.modules.report.service.ReportTextFormatter.BlockType;
 import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
@@ -16,15 +18,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 
 @Service
 public class WordService {
 
+    private static final String FILE_NAME = "每日资讯摘要";
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final Logger log = LoggerFactory.getLogger(WordService.class);
 
-    public Path writeDailySummary(Path reportDirectory, String reportId, String reportTitle, LocalDate reportDate, String content) {
-        Path outputPath = reportDirectory.resolve(reportId + ".docx");
+    public Path writeDailySummary(Path reportDirectory, String fileBaseName, String reportTitle, LocalDate reportDate, String content) {
+        String resolvedFileName = fileBaseName == null || fileBaseName.isBlank() ? FILE_NAME : fileBaseName.trim();
+        Path outputPath = reportDirectory.resolve(resolvedFileName + ".docx");
         try (XWPFDocument document = new XWPFDocument(); OutputStream outputStream = Files.newOutputStream(outputPath)) {
             writeTitle(document, reportTitle);
             writeMeta(document, reportDate);
@@ -39,7 +44,7 @@ public class WordService {
     private void writeTitle(XWPFDocument document, String reportTitle) {
         XWPFParagraph paragraph = document.createParagraph();
         paragraph.setAlignment(ParagraphAlignment.CENTER);
-        paragraph.setSpacingAfter(300);
+        paragraph.setSpacingAfter(240);
         XWPFRun run = paragraph.createRun();
         run.setText(reportTitle);
         run.setBold(true);
@@ -49,7 +54,7 @@ public class WordService {
 
     private void writeMeta(XWPFDocument document, LocalDate reportDate) {
         XWPFParagraph paragraph = document.createParagraph();
-        paragraph.setSpacingAfter(200);
+        paragraph.setSpacingAfter(180);
         XWPFRun run = paragraph.createRun();
         run.setText("生成日期：" + reportDate.format(DATE_FORMATTER));
         run.setFontSize(10);
@@ -58,26 +63,57 @@ public class WordService {
     }
 
     private void writeBody(XWPFDocument document, String content) {
-        String normalized = content.replace("```", "").replace("\r\n", "\n").trim();
-        String[] paragraphs = normalized.split("\\R\\s*\\R");
-        for (String block : paragraphs) {
-            if (block.isBlank()) {
-                continue;
+        List<Block> blocks = ReportTextFormatter.format(content);
+        for (Block block : blocks) {
+            switch (block.type()) {
+                case BLANK -> addBlankParagraph(document, 120);
+                case HEADING -> addParagraph(document, block.text(), 13, true, 220, 120, ParagraphAlignment.LEFT, false, null);
+                case SUBHEADING -> addParagraph(document, block.text(), 12, true, 160, 80, ParagraphAlignment.LEFT, false, null);
+                case BULLET -> addParagraph(document, block.text(), 11, false, 240, 60, ParagraphAlignment.LEFT, true, null);
+                case QUOTE -> addParagraph(document, block.text(), 11, false, 240, 80, ParagraphAlignment.LEFT, false, null);
+                case META -> addParagraph(document, block.text(), 10, false, 0, 80, ParagraphAlignment.LEFT, false, "666666");
+                case BODY -> addParagraph(document, block.text(), 11, false, 0, 90, ParagraphAlignment.BOTH, false, null);
             }
-            XWPFParagraph paragraph = document.createParagraph();
-            paragraph.setAlignment(ParagraphAlignment.BOTH);
-            paragraph.setSpacingAfter(160);
-            XWPFRun run = paragraph.createRun();
-            run.setFontFamily("Microsoft YaHei");
-            run.setFontSize(isHeading(block) ? 13 : 11);
-            run.setBold(isHeading(block));
-            run.setText(block.trim());
         }
     }
 
-    private boolean isHeading(String block) {
-        String text = block.trim();
-        return text.startsWith("一、") || text.startsWith("二、") || text.startsWith("三、")
-                || (text.startsWith("《") && text.endsWith("》"));
+    private void addBlankParagraph(XWPFDocument document, int spacingAfter) {
+        XWPFParagraph paragraph = document.createParagraph();
+        paragraph.setSpacingAfter(spacingAfter);
+    }
+
+    private void addParagraph(
+            XWPFDocument document,
+            String text,
+            int fontSize,
+            boolean bold,
+            int indentationLeft,
+            int spacingAfter,
+            ParagraphAlignment alignment,
+            boolean bullet,
+            String color
+    ) {
+        XWPFParagraph paragraph = document.createParagraph();
+        paragraph.setAlignment(alignment);
+        paragraph.setSpacingAfter(spacingAfter);
+        if (indentationLeft > 0) {
+            paragraph.setIndentationLeft(indentationLeft);
+        }
+        if (bullet) {
+            paragraph.setIndentationHanging(180);
+        }
+
+        XWPFRun run = paragraph.createRun();
+        run.setFontFamily("Microsoft YaHei");
+        run.setFontSize(fontSize);
+        run.setBold(bold);
+        if (color != null) {
+            run.setColor(color);
+        }
+        if (bullet) {
+            run.setText("• " + text);
+        } else {
+            run.setText(text);
+        }
     }
 }

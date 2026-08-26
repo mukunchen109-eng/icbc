@@ -1,7 +1,9 @@
 package com.icbc.financialinfo.modules.report.service;
 
+import com.icbc.financialinfo.modules.report.model.DifyNewsArticleInput;
 import com.icbc.financialinfo.modules.report.model.DifyWorkflowRequest;
 import com.icbc.financialinfo.modules.report.properties.ReportProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -14,7 +16,10 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.ArrayList;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,21 +31,18 @@ public class DifyService {
     private static final ParameterizedTypeReference<Map<String, Object>> MAP_TYPE =
             new ParameterizedTypeReference<>() {};
     private static final int PREVIEW_LIMIT = 500;
+    private static final String REQUEST_FILE_NAME = "dify-request.json";
 
     private final RestClient.Builder restClientBuilder;
     private final ReportProperties reportProperties;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public DifyService(RestClient.Builder restClientBuilder, ReportProperties reportProperties) {
         this.restClientBuilder = restClientBuilder;
         this.reportProperties = reportProperties;
     }
 
-    public String generateDailySummary(DifyWorkflowRequest workflowRequest) {
-        if (reportProperties.getDify().isMockEnabled()) {
-            log.info("Dify mock mode enabled, skipping real workflow call");
-            return buildMockReport(workflowRequest);
-        }
-
+    public String generateDailySummary(DifyWorkflowRequest workflowRequest, Path reportDirectory) {
         ReportProperties.Dify dify = reportProperties.getDify();
         validateConfig(dify);
 
@@ -49,16 +51,22 @@ public class DifyService {
         payload.put("response_mode", dify.getResponseMode());
         payload.put("user", dify.getUser());
 
+        writePayloadFile(reportDirectory, payload);
+
+        if (reportProperties.getDify().isMockEnabled()) {
+            log.info("Dify mock mode enabled, skipping real workflow call");
+            return buildMockReport(workflowRequest);
+        }
+
         log.info(
-                "Calling Dify workflow: baseUrl={}, endpoint={}, responseMode={}, user={}, inputsKeys={}, titleLength={}, contentLength={}, contentPreview={}",
+                "Calling Dify workflow: baseUrl={}, endpoint={}, responseMode={}, user={}, inputsKeys={}, articlesCount={}, articlesPreview={}",
                 maskUrl(dify.getBaseUrl()),
                 dify.getEndpoint(),
                 dify.getResponseMode(),
                 dify.getUser(),
                 workflowRequest.toInputs().keySet(),
-                lengthOf(workflowRequest.title()),
-                lengthOf(workflowRequest.content()),
-                preview(workflowRequest.content())
+                workflowRequest.articles().size(),
+                previewArticles(workflowRequest.articles())
         );
 
         try {
@@ -108,38 +116,34 @@ public class DifyService {
                     ex.getMessage(),
                     ex
             );
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "调用 Dify Workflow 失败: " + ex.getMessage(), ex);
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Dify workflow call failed: " + ex.getMessage(), ex);
         }
     }
 
     private void validateConfig(ReportProperties.Dify dify) {
         if (!StringUtils.hasText(dify.getBaseUrl())) {
-            log.error("Dify baseUrl is missing");
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Dify 未配置，请补充 app.report.dify.base-url"
+                    "Dify is not configured, please set app.report.dify.base-url"
             );
         }
         if (!StringUtils.hasText(dify.getApiKey())) {
-            log.error("Dify apiKey is missing");
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Dify 未配置，请补充 app.report.dify.api-key"
+                    "Dify is not configured, please set app.report.dify.api-key"
             );
         }
         if (!StringUtils.hasText(dify.getEndpoint())) {
-            log.error("Dify endpoint is missing");
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Dify 未配置，请补充 app.report.dify.endpoint"
+                    "Dify is not configured, please set app.report.dify.endpoint"
             );
         }
     }
 
     private String extractContent(Map<String, Object> response) {
         if (response == null || response.isEmpty()) {
-            log.error("Dify response is empty");
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Dify Workflow 返回为空");
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Dify workflow returned an empty response");
         }
 
         Object taskId = response.get("task_id");
@@ -150,101 +154,74 @@ public class DifyService {
             Object status = dataMap.get("status");
             if (status instanceof String workflowStatus && "failed".equalsIgnoreCase(workflowStatus)) {
                 Object error = dataMap.get("error");
-                log.error(
-                        "Dify workflow returned failed status: taskId={}, workflowRunId={}, error={}, dataKeys={}",
-                        taskId,
-                        workflowRunId,
-                        error,
-                        dataMap.keySet()
-                );
                 throw new ResponseStatusException(
                         HttpStatus.BAD_GATEWAY,
-                        "Dify Workflow 执行失败" + buildTraceSuffix(taskId, workflowRunId) + (error == null ? "" : "，error=" + error)
+                        "Dify workflow execution failed" + buildTraceSuffix(taskId, workflowRunId)
+                                + (error == null ? "" : ", error=" + error)
                 );
             }
 
             Object outputs = dataMap.get("outputs");
             if (outputs instanceof Map<?, ?> outputMap) {
-                log.info("Dify workflow outputs keys: {}", outputMap.keySet());
                 for (String key : new String[]{"result", "report", "content", "text", "answer"}) {
                     Object value = outputMap.get(key);
                     if (value instanceof String content && StringUtils.hasText(content)) {
                         return content.trim();
                     }
                 }
-                log.error(
-                        "Dify workflow outputs do not contain a readable text field: taskId={}, workflowRunId={}, outputsKeys={}",
-                        taskId,
-                        workflowRunId,
-                        outputMap.keySet()
-                );
-            } else {
-                log.error(
-                        "Dify workflow response missing outputs map: taskId={}, workflowRunId={}, dataKeys={}",
-                        taskId,
-                        workflowRunId,
-                        dataMap.keySet()
-                );
             }
         }
 
         throw new ResponseStatusException(
                 HttpStatus.BAD_GATEWAY,
-                "无法从 Dify Workflow 响应中解析报告正文" + buildTraceSuffix(taskId, workflowRunId)
+                "Cannot parse Dify workflow response" + buildTraceSuffix(taskId, workflowRunId)
         );
     }
 
-    private String buildMockReport(DifyWorkflowRequest workflowRequest) {
-        List<String> titles = extractTitles(workflowRequest.content());
-        StringBuilder builder = new StringBuilder();
-        builder.append("《").append(workflowRequest.title()).append("》").append(System.lineSeparator()).append(System.lineSeparator());
-        builder.append("一、核心资讯摘要").append(System.lineSeparator());
-
-        int summaryCount = Math.min(5, titles.size());
-        for (int i = 0; i < summaryCount; i++) {
-            String title = titles.get(i);
-            builder.append("【").append(title).append("】").append(System.lineSeparator());
-            builder.append("本段为模拟生成内容，用于联调数据库查询、报告生成与文件导出流程。")
-                    .append("后端已按日期 ").append(workflowRequest.newsDate())
-                    .append(" 从资讯池查询到原始记录，并将这些记录拼装后送入当前 mock Dify 服务。")
-                    .append("因此这段内容不代表真实模型分析结果，而是一个稳定、可重复的测试响应。")
-                    .append("在接入真实 Dify Workflow 后，这里会替换为大模型生成的正式日报文本。")
-                    .append("当前摘要保留原标题，用于验证报告正文、下载接口、Word/PDF 导出以及 Apifox 调试链路是否全部打通。")
-                    .append("来源标签：模拟生成")
-                    .append(System.lineSeparator()).append(System.lineSeparator());
+    private void writePayloadFile(Path reportDirectory, Map<String, Object> payload) {
+        try {
+            Files.createDirectories(reportDirectory);
+            Path outputFile = reportDirectory.resolve(REQUEST_FILE_NAME);
+            String formattedJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
+            Files.writeString(outputFile, formattedJson, StandardCharsets.UTF_8);
+            log.info("Dify request payload written to {}", outputFile.toAbsolutePath());
+        } catch (IOException ex) {
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to write Dify request payload file",
+                    ex
+            );
         }
-
-        builder.append("二、备选资讯").append(System.lineSeparator());
-        for (int i = summaryCount; i < Math.min(summaryCount + 14, titles.size()); i++) {
-            builder.append(i - summaryCount + 1)
-                    .append(". ")
-                    .append(titles.get(i))
-                    .append("。理由：该条已进入同日期资讯池，可作为正式接入 Dify Workflow 后的候选资讯。")
-                    .append(System.lineSeparator());
-        }
-        return builder.toString().trim();
     }
 
-    private List<String> extractTitles(String content) {
-        List<String> titles = new ArrayList<>();
-        for (String line : content.split("\\R")) {
-            if (line.startsWith("标题：")) {
-                String title = line.substring("标题：".length()).trim();
-                if (!title.isEmpty()) {
-                    titles.add(title);
-                }
-            }
+    private String buildMockReport(DifyWorkflowRequest workflowRequest) {
+        List<DifyNewsArticleInput> articles = workflowRequest.articles();
+        StringBuilder builder = new StringBuilder();
+        builder.append("Article count: ").append(articles.size()).append(System.lineSeparator());
+        builder.append(System.lineSeparator());
+        builder.append("Articles:").append(System.lineSeparator());
+
+        int summaryCount = Math.min(5, articles.size());
+        for (int i = 0; i < summaryCount; i++) {
+            DifyNewsArticleInput article = articles.get(i);
+            builder.append(i + 1).append(". ")
+                    .append(article.title())
+                    .append(" | id=").append(article.id())
+                    .append(" | industry=").append(article.industry())
+                    .append(" | area=").append(article.area())
+                    .append(System.lineSeparator());
         }
-        return titles;
+
+        return builder.toString().trim();
     }
 
     private String buildTraceSuffix(Object taskId, Object workflowRunId) {
         StringBuilder builder = new StringBuilder();
         if (taskId != null) {
-            builder.append("，task_id=").append(taskId);
+            builder.append(", task_id=").append(taskId);
         }
         if (workflowRunId != null) {
-            builder.append("，workflow_run_id=").append(workflowRunId);
+            builder.append(", workflow_run_id=").append(workflowRunId);
         }
         return builder.toString();
     }
@@ -262,8 +239,28 @@ public class DifyService {
         return pathIndex > 0 ? trimmed.substring(0, pathIndex) : trimmed;
     }
 
-    private int lengthOf(String value) {
-        return value == null ? 0 : value.length();
+    private String previewArticles(List<DifyNewsArticleInput> articles) {
+        if (articles == null || articles.isEmpty()) {
+            return "[]";
+        }
+        int previewSize = Math.min(3, articles.size());
+        StringBuilder builder = new StringBuilder("[");
+        for (int i = 0; i < previewSize; i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            DifyNewsArticleInput article = articles.get(i);
+            builder.append("{id=").append(preview(article.id()))
+                    .append(", title=").append(preview(article.title()))
+                    .append(", industry=").append(preview(article.industry()))
+                    .append(", area=").append(preview(article.area()))
+                    .append("}");
+        }
+        if (articles.size() > previewSize) {
+            builder.append(", ...");
+        }
+        builder.append("]");
+        return builder.toString();
     }
 
     private String preview(String value) {
