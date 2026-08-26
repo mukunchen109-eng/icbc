@@ -41,6 +41,8 @@ def run_collection(target_date: date, trigger_type: str) -> None:
                 articles.extend(parse_articles(batch))
 
             articles = remove_duplicates(articles)
+            for daily_seq, article in enumerate(articles, start=1):
+                article["daily_seq"] = daily_seq
 
             if not articles:
                 finish_collection_job(

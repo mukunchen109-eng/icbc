@@ -47,6 +47,7 @@ INSERT_NEWS = text(
     INSERT INTO news_pool (
         source_row_id,
         news_date,
+        daily_seq,
         title,
         original_content,
         content,
@@ -57,6 +58,7 @@ INSERT_NEWS = text(
     VALUES (
         :source_row_id,
         :news_date,
+        :daily_seq,
         :title,
         :original_content,
         :content,
@@ -83,6 +85,7 @@ def save_articles(articles: list[dict]) -> dict:
         {
             "source_row_id": article["source_row_id"],
             "news_date": article["news_date"],
+            "daily_seq": article["daily_seq"],
             "title": article["title"],
             "original_content": article["original_content"],
             "content": article["content"],
@@ -129,7 +132,7 @@ def save_articles(articles: list[dict]) -> dict:
 
 
 #检查某天是佛已有任务记录，存在任意任务状态都返回true
-def collection_job_exists(target_date: date) -> bool:
+def collection_job_exists(target_date: date)-> bool:
     sql = text(
         """
         SELECT 1
@@ -181,7 +184,7 @@ def finish_collection_job(
     processed_count: int,
     retry_count: int,
     message: str,
-):
+)->None:
     sql = text(
         """
         UPDATE collection_job

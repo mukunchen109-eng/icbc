@@ -1,6 +1,8 @@
 import hashlib
 import re
 from bs4 import BeautifulSoup
+import unicodedata
+from rapidfuzz import fuzz
 
 NOISE_PREFIXES = (
     "广告",
@@ -9,6 +11,7 @@ NOISE_PREFIXES = (
     "免责声明",
     "责任编辑",
 )
+SIMILARITY_THRESHOLD = 85
 
 
 def clean_line(text: str) -> str:
@@ -86,29 +89,52 @@ def parse_articles(batch: dict) -> list[dict]:
     return articles
 
 
+def normalize_for_dedup(title: str, content: str) -> str:
+    text = f"{title}\n{content}"
+    text = unicodedata.normalize("NFKC", text).lower()
+    return re.sub(r"\s+", "", text)
+
+
 def calculate_hash(article: dict) -> str:
-    text = f"{article['title']}\n{article['content']}"
+    text = normalize_for_dedup(
+        article["title"],
+        article["content"],
+    )
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def remove_duplicates(articles: list[dict]) -> list[dict]:
-    seen = set()
+    seen_hashes = set()
     result = []
+    normalized_texts = []
 
     for article in articles:
         content_hash = calculate_hash(article)
-        duplicate_key = (
-            article["news_date"],
-            content_hash,
+        hash_key = (article["news_date"], content_hash)
+
+        if hash_key in seen_hashes:
+            continue
+        seen_hashes.add(hash_key)
+
+        current_text = normalize_for_dedup(
+            article["title"],
+            article["content"],
         )
 
-        if duplicate_key in seen:
+        is_similar = False
+        for saved_article, saved_text in zip(result, normalized_texts):
+            if saved_article["news_date"] != article["news_date"]:
+                continue
+            if fuzz.ratio(current_text, saved_text) >= SIMILARITY_THRESHOLD:
+                is_similar = True
+                break
+        if is_similar:
             continue
-
-        seen.add(duplicate_key)
 
         article_with_hash = article.copy()
         article_with_hash["content_hash"] = content_hash
+
         result.append(article_with_hash)
+        normalized_texts.append(current_text)
 
     return result
