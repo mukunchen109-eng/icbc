@@ -4,6 +4,9 @@ spring:
   application:
     name: financial-intelligence-system
   datasource:
+    url: ${ICBC_DB_URL:jdbc:mysql://icbc-db123.mysql.polardb.rds.aliyuncs.com:3306/db1?useSSL=true&useUnicode=true&serverTimezone=Asia%2FShanghai&characterEncoding=UTF-8}
+    username: ${ICBC_DB_USERNAME:icbc_db123}
+    password: "icbc123!"
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
