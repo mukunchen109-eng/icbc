@@ -3,6 +3,8 @@ package com.icbc.financialinfo.modules.review;
 import com.icbc.financialinfo.common.ApiResponse;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.AddCommentRequest;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.AddCommentResult;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.AddMarkRequest;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.AddMarkResult;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ModifyArticleRequest;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ModifyArticleResult;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplaceArticleRequest;
@@ -16,6 +18,7 @@ import com.icbc.financialinfo.modules.review.ReviewQueryModels.ArticleSource;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.AssignedTaskSummary;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.PageData;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ReportArticle;
+import com.icbc.financialinfo.modules.review.ReviewQueryModels.ReviewRecordView;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -67,21 +70,30 @@ public class ReviewController {
         }
         int safePageNum = Math.max(pageNum, 1);
         int safePageSize = Math.min(Math.max(pageSize, 1), 100);
+        reviewRepository.ensureMissingTasks();
         return new ApiResponse<>(200, "查询成功", new PageData<>(
                 reviewRepository.countAssignedTasks(reviewerId, assignedStage, status),
                 safePageNum, safePageSize,
-                reviewRepository.findAssignedTasks(
-                        reviewerId, assignedStage, status, safePageNum, safePageSize)));
+                reviewRepository.findAssignedTasks(reviewerId, assignedStage, status, safePageNum, safePageSize)));
     }
 
-    @GetMapping("/report-versions/{versionId}/articles")
-    public ResponseEntity<ApiResponse<List<ReportArticle>>> articles(@PathVariable long versionId) {
-        if (!reviewRepository.versionExists(versionId)) {
+    @GetMapping("/review-tasks/{id}")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> taskDetail(
+            @PathVariable long id, HttpServletRequest servletRequest) {
+        return reviewRepository.findTaskDetail(id, operatorId(servletRequest))
+                .map(task -> ResponseEntity.ok(new ApiResponse<>(200, "查询成功", task)))
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(new ApiResponse<>(404, "审核任务不存在", null)));
+    }
+
+    @GetMapping("/reports/{reportId}/articles")
+    public ResponseEntity<ApiResponse<List<ReportArticle>>> articles(@PathVariable long reportId) {
+        if (!reviewRepository.reportExists(reportId)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(new ApiResponse<>(404, "报告版本不存在", null));
+                    .body(new ApiResponse<>(404, "报告不存在", null));
         }
         return ResponseEntity.ok(new ApiResponse<>(
-                200, "查询成功", reviewRepository.findArticles(versionId)));
+                200, "查询成功", reviewRepository.findArticles(reportId)));
     }
 
     @GetMapping("/report-articles/{articleId}/source")
@@ -92,12 +104,23 @@ public class ReviewController {
                         .body(new ApiResponse<>(404, "原始资讯不存在", null)));
     }
 
+    @GetMapping("/reports/{reportId}/sources")
+    public ResponseEntity<ApiResponse<List<ArticleSource>>> reportSources(
+            @PathVariable long reportId) {
+        if (!reviewRepository.reportExists(reportId)) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ApiResponse<>(404, "报告不存在", null));
+        }
+        return ResponseEntity.ok(new ApiResponse<>(
+                200, "查询成功", reviewRepository.findReportSources(reportId)));
+    }
+
     @PutMapping("/review-tasks/{taskId}/articles/{articleId}")
     public ApiResponse<ModifyArticleResult> modifyArticle(
             @PathVariable long taskId, @PathVariable long articleId,
             @RequestBody ModifyArticleRequest request, HttpServletRequest servletRequest) {
         ModifyArticleResult result = commandService.modifyArticle(
-                taskId, articleId, operatorId(servletRequest), request);
+                reportId(taskId, servletRequest), articleId, operatorId(servletRequest), role(servletRequest), request);
         return new ApiResponse<>(200, "报告条目修改成功", result);
     }
 
@@ -106,7 +129,7 @@ public class ReviewController {
             @PathVariable long taskId, @RequestBody AddCommentRequest request,
             HttpServletRequest servletRequest) {
         AddCommentResult result = commandService.addComment(
-                taskId, operatorId(servletRequest), request);
+                reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest), request);
         return new ApiResponse<>(200, "批注添加成功", result);
     }
 
@@ -115,7 +138,7 @@ public class ReviewController {
             @PathVariable long taskId, @PathVariable long articleId,
             @RequestBody ReplaceArticleRequest request, HttpServletRequest servletRequest) {
         ReplaceArticleResult result = commandService.replaceArticle(
-                taskId, articleId, operatorId(servletRequest), request);
+                reportId(taskId, servletRequest), articleId, operatorId(servletRequest), role(servletRequest), request);
         return new ApiResponse<>(200, "报告条目替换成功", result);
     }
 
@@ -126,7 +149,38 @@ public class ReviewController {
             @RequestParam(defaultValue = "") String keyword,
             HttpServletRequest servletRequest) {
         return new ApiResponse<>(200, "查询成功", commandService.replacementArticles(
-                taskId, operatorId(servletRequest), category, keyword));
+                reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest), category, keyword));
+    }
+
+    @PostMapping("/review-tasks/{taskId}/marks")
+    public ApiResponse<AddMarkResult> addMark(
+            @PathVariable long taskId, @RequestBody AddMarkRequest request,
+            HttpServletRequest servletRequest) {
+        return new ApiResponse<>(200, "审核标记保存成功",
+                commandService.addMark(reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest), request));
+    }
+
+    @GetMapping("/review-tasks/{taskId}/records")
+    public ApiResponse<List<ReviewRecordView>> reviewRecords(
+            @PathVariable long taskId, HttpServletRequest servletRequest) {
+        return new ApiResponse<>(200, "查询成功",
+                commandService.reviewRecords(reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest)));
+    }
+
+    @GetMapping("/reports/{reportId}/review-records")
+    public ApiResponse<PageData<ReviewRecordView>> reportReviewRecords(
+            @PathVariable long reportId,
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "20") int pageSize,
+            HttpServletRequest servletRequest) {
+        List<ReviewRecordView> records = commandService.reviewRecords(
+                reportId, operatorId(servletRequest), role(servletRequest));
+        int safePageNum = Math.max(pageNum, 1);
+        int safePageSize = Math.min(Math.max(pageSize, 1), 100);
+        int from = Math.min((safePageNum - 1) * safePageSize, records.size());
+        int to = Math.min(from + safePageSize, records.size());
+        return new ApiResponse<>(200, "查询成功", new PageData<>(
+                records.size(), safePageNum, safePageSize, records.subList(from, to)));
     }
 
     @PostMapping("/review-tasks/{taskId}/submit")
@@ -134,23 +188,64 @@ public class ReviewController {
             @PathVariable long taskId, @RequestBody SubmitReviewRequest request,
             HttpServletRequest servletRequest) {
         return new ApiResponse<>(200, "审核提交成功", commandService.submit(
-                taskId, operatorId(servletRequest),
-                String.valueOf(servletRequest.getAttribute("reviewRoleCode")), request));
+                reportId(taskId, servletRequest), operatorId(servletRequest),
+                role(servletRequest), request));
     }
 
-    @GetMapping("/report-versions/{versionId}/issues")
-    public ApiResponse<List<ReviewIssue>> issues(@PathVariable long versionId) {
-        return new ApiResponse<>(200, "查询成功", issueService.issues(versionId));
+    @PostMapping("/review-tasks/{taskId}/approve")
+    public ApiResponse<SubmitReviewResult> approve(
+            @PathVariable long taskId, @RequestBody(required = false) ReviewDecisionRequest request,
+            HttpServletRequest servletRequest) {
+        if (!"INFO_MANAGER".equals(role(servletRequest))) {
+            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "当前用户无权执行初审");
+        }
+        SubmitReviewResult result = commandService.submit(
+                reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest),
+                new SubmitReviewRequest("APPROVE", request == null ? null : request.reviewComment()));
+        return new ApiResponse<>(200, "初审通过", result);
     }
 
-    @PostMapping("/report-versions/{versionId}/check")
-    public ApiResponse<CheckResult> check(@PathVariable long versionId) {
-        return new ApiResponse<>(200, "审核检测完成", issueService.check(versionId));
+    @PostMapping("/review-tasks/{taskId}/finalize")
+    public ApiResponse<SubmitReviewResult> finalizeReview(
+            @PathVariable long taskId, @RequestBody(required = false) ReviewDecisionRequest request,
+            HttpServletRequest servletRequest) {
+        if (!"DEPT_MANAGER".equals(role(servletRequest))) {
+            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "当前用户无终审权限");
+        }
+        SubmitReviewResult result = commandService.submit(
+                reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest),
+                new SubmitReviewRequest("APPROVE", request == null ? null : request.reviewComment()));
+        return new ApiResponse<>(200, "终审通过，报告进入待发送状态", result);
+    }
+
+    @PostMapping("/review-tasks/{taskId}/reject")
+    public ApiResponse<SubmitReviewResult> reject(
+            @PathVariable long taskId, @RequestBody ReviewDecisionRequest request,
+            HttpServletRequest servletRequest) {
+        if (request == null || request.reviewComment() == null || request.reviewComment().isBlank()) {
+            throw new ReviewOperationException(HttpStatus.BAD_REQUEST, "退回原因不能为空");
+        }
+        SubmitReviewResult result = commandService.submit(
+                reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest),
+                new SubmitReviewRequest("REJECT", request.reviewComment()));
+        return new ApiResponse<>(200, "审核退回成功", result);
+    }
+
+    @GetMapping("/reports/{reportId}/issues")
+    public ApiResponse<List<ReviewIssue>> issues(@PathVariable long reportId) {
+        return new ApiResponse<>(200, "查询成功", issueService.issues(reportId));
+    }
+
+    @PostMapping("/reports/{reportId}/check")
+    public ApiResponse<CheckResult> check(@PathVariable long reportId, HttpServletRequest servletRequest) {
+        requireInformationManager(servletRequest);
+        return new ApiResponse<>(200, "审核检测完成", issueService.check(reportId));
     }
 
     @PutMapping("/review-issues/{id}/resolve")
     public ApiResponse<Void> resolveIssue(
             @PathVariable long id, HttpServletRequest servletRequest) {
+        requireInformationManager(servletRequest);
         issueService.resolve(id, operatorId(servletRequest));
         return new ApiResponse<>(200, "审核问题已标记为已处理", null);
     }
@@ -167,5 +262,24 @@ public class ReviewController {
         Object userId = request.getAttribute("reviewUserId");
         if (userId instanceof Long id) return id;
         throw new ReviewOperationException(HttpStatus.FORBIDDEN, "无权操作审核任务");
+    }
+
+    private String role(HttpServletRequest request) {
+        return String.valueOf(request.getAttribute("reviewRoleCode"));
+    }
+
+    private long reportId(long taskOrReportId, HttpServletRequest request) {
+        return reviewRepository.findAssignedReportId(taskOrReportId, operatorId(request))
+                .orElseThrow(() -> new ReviewOperationException(
+                        HttpStatus.NOT_FOUND, "审核任务不存在或不属于当前用户"));
+    }
+
+    public record ReviewDecisionRequest(String reviewComment) {}
+
+    private void requireInformationManager(HttpServletRequest request) {
+        if (!"INFO_MANAGER".equals(role(request))) {
+            throw new ReviewOperationException(HttpStatus.FORBIDDEN,
+                    "部门负责人只能查看初审留痕并提交终审意见");
+        }
     }
 }

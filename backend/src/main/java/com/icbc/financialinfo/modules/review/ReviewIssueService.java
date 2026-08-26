@@ -22,35 +22,35 @@ public class ReviewIssueService {
     private static final Pattern NUMBER_PATTERN = Pattern.compile("\\d+(?:\\.\\d+)?(?:[%％])?");
 
     private final ReviewIssueRepository repository;
-    private final Set<Long> checkingVersions = ConcurrentHashMap.newKeySet();
+    private final Set<Long> checkingReports = ConcurrentHashMap.newKeySet();
 
     public ReviewIssueService(ReviewIssueRepository repository) {
         this.repository = repository;
     }
 
     @Transactional(readOnly = true)
-    public List<ReviewIssue> issues(long versionId) {
-        requireVersion(versionId);
-        return repository.findIssues(versionId);
+    public List<ReviewIssue> issues(long reportId) {
+        requireReport(reportId);
+        return repository.findIssues(reportId);
     }
 
-    public CheckResult check(long versionId) {
-        requireVersion(versionId);
-        if (!checkingVersions.add(versionId)) {
+    public CheckResult check(long reportId) {
+        requireReport(reportId);
+        if (!checkingReports.add(reportId)) {
             throw new ReviewOperationException(
                     HttpStatus.CONFLICT, "当前报告正在检测，请稍后重试");
         }
         try {
-            return executeCheck(versionId);
+            return executeCheck(reportId);
         } finally {
-            checkingVersions.remove(versionId);
+            checkingReports.remove(reportId);
         }
     }
 
     @Transactional
-    protected CheckResult executeCheck(long versionId) {
-        List<CheckArticle> articles = repository.findCheckArticles(versionId);
-        repository.deleteIssues(versionId);
+    protected CheckResult executeCheck(long reportId) {
+        List<CheckArticle> articles = repository.findCheckArticles(reportId);
+        repository.deleteIssues(reportId);
         int sensitiveCount = 0;
         int dataCount = 0;
 
@@ -64,7 +64,7 @@ public class ReviewIssueService {
                 int position;
                 while ((position = summary.indexOf(word, fromIndex)) >= 0) {
                     repository.insertIssue(
-                            versionId, article.articleId(), "SENSITIVE_CONTENT", word,
+                            article.articleId(), "SENSITIVE_CONTENT", word,
                             position, position + word.length(), "命中敏感内容，请人工复核");
                     sensitiveCount++;
                     fromIndex = position + word.length();
@@ -79,13 +79,13 @@ public class ReviewIssueService {
                 if (!checkedAtOffset.add(identity)) continue;
                 if (!source.contains(normalizeNumberText(matched))) {
                     repository.insertIssue(
-                            versionId, article.articleId(), "DATA_INCONSISTENCY", matched,
+                            article.articleId(), "DATA_INCONSISTENCY", matched,
                             matcher.start(), matcher.end(), "报告数据与原始资讯数据不一致");
                     dataCount++;
                 }
             }
         }
-        return new CheckResult(versionId, sensitiveCount + dataCount, sensitiveCount, dataCount);
+        return new CheckResult(reportId, sensitiveCount + dataCount, sensitiveCount, dataCount);
     }
 
     @Transactional
@@ -99,9 +99,9 @@ public class ReviewIssueService {
         repository.resolveIssue(issueId, operatorId);
     }
 
-    private void requireVersion(long versionId) {
-        if (!repository.versionExists(versionId)) {
-            throw new ReviewOperationException(HttpStatus.NOT_FOUND, "报告版本不存在");
+    private void requireReport(long reportId) {
+        if (!repository.reportExists(reportId)) {
+            throw new ReviewOperationException(HttpStatus.NOT_FOUND, "报告不存在");
         }
     }
 

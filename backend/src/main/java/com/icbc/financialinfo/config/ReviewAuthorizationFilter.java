@@ -23,14 +23,16 @@ public class ReviewAuthorizationFilter extends OncePerRequestFilter {
     private static final Set<String> REVIEW_ROLES = Set.of("INFO_MANAGER", "DEPT_MANAGER");
     private static final Pattern REPORT_SUBRESOURCE = Pattern.compile(
             "^/api/reports/[^/]+/(review-detail|versions)$");
-    private static final Pattern VERSION_REVIEW_RESOURCE = Pattern.compile(
-            "^/api/report-versions/[^/]+/(articles|issues|check)$");
+    private static final Pattern REPORT_REVIEW_RESOURCE = Pattern.compile(
+            "^/api/reports/[^/]+/(articles|sources|issues|check|review-records)$");
     private static final Pattern ARTICLE_SOURCE = Pattern.compile(
             "^/api/report-articles/[^/]+/source$");
     private static final Pattern ISSUE_RESOLVE = Pattern.compile(
             "^/api/review-issues/[^/]+/resolve$");
     private static final Pattern REVIEW_TASK_ACTION = Pattern.compile(
-            "^/api/review-tasks/[^/]+/(comments|replacement-articles|submit)$");
+            "^/api/review-tasks/[^/]+/(comments|marks|records|replacement-articles|submit|approve|reject|finalize)$");
+    private static final Pattern REVIEW_TASK_DETAIL = Pattern.compile(
+            "^/api/review-tasks/[^/]+$");
     private static final Pattern REVIEW_TASK_ARTICLE_ACTION = Pattern.compile(
             "^/api/review-tasks/[^/]+/articles/[^/]+(?:/replace)?$");
 
@@ -49,12 +51,14 @@ public class ReviewAuthorizationFilter extends OncePerRequestFilter {
         boolean reviewApi = "/api/reports/review".equals(path)
                 || "/api/review-tasks/my".equals(path)
                 || path.startsWith("/api/mail-tasks")
+                || path.startsWith("/api/mail-logs")
                 || path.startsWith("/api/mail-recipients")
                 || REPORT_SUBRESOURCE.matcher(path).matches()
-                || VERSION_REVIEW_RESOURCE.matcher(path).matches()
+                || REPORT_REVIEW_RESOURCE.matcher(path).matches()
                 || ARTICLE_SOURCE.matcher(path).matches()
                 || ISSUE_RESOLVE.matcher(path).matches()
                 || REVIEW_TASK_ACTION.matcher(path).matches()
+                || REVIEW_TASK_DETAIL.matcher(path).matches()
                 || REVIEW_TASK_ARTICLE_ACTION.matcher(path).matches();
         return !reviewApi;
     }
@@ -76,9 +80,12 @@ public class ReviewAuthorizationFilter extends OncePerRequestFilter {
                         new ApiResponse<>(503, "数据库连接暂不可用，请稍后重试", null));
                 return;
             }
-            if (user != null && user.status() == 1 && REVIEW_ROLES.contains(user.roleCode())) {
+            String effectiveRole = user != null && Long.valueOf(2L).equals(user.roleId())
+                    ? "INFO_MANAGER" : user == null ? null : user.roleCode();
+            if (user != null && user.status() == 1 && REVIEW_ROLES.contains(effectiveRole)) {
                 request.setAttribute("reviewUserId", user.id());
-                request.setAttribute("reviewRoleCode", user.roleCode());
+                request.setAttribute("reviewRoleId", user.roleId());
+                request.setAttribute("reviewRoleCode", effectiveRole);
                 filterChain.doFilter(request, response);
                 return;
             }

@@ -11,6 +11,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -33,7 +34,7 @@ public class DepartmentMailController {
             @RequestBody @Valid CreateMailRequest request) {
         try {
             CreateRequest serviceRequest = new CreateRequest(
-                    request.reportId(), request.versionId(), request.subject(), request.mailBody(),
+                    request.reportId(), request.subject(), request.mailBody(),
                     request.recipients().stream().map(item ->
                             new DepartmentMailService.Recipient(item.name(), item.email())).toList());
             return ResponseEntity.ok(new ApiResponse<>(200, "邮件任务创建成功", mailService.create(managerId(servletRequest), serviceRequest)));
@@ -55,6 +56,18 @@ public class DepartmentMailController {
         }
     }
 
+    @GetMapping("/{id}")
+    public ApiResponse<DepartmentMailService.MailTaskDetail> detail(
+            HttpServletRequest request, @PathVariable long id) {
+        return new ApiResponse<>(200, "查询成功", mailService.detail(managerId(request), id));
+    }
+
+    @GetMapping("/{id}/logs")
+    public ApiResponse<List<DepartmentMailService.MailLogDetail>> logs(
+            HttpServletRequest request, @PathVariable long id) {
+        return new ApiResponse<>(200, "查询成功", mailService.logs(managerId(request), id));
+    }
+
     private <T> ResponseEntity<ApiResponse<T>> error(DepartmentBusinessException exception) {
         return ResponseEntity.status(exception.status())
                 .body(new ApiResponse<>(exception.status(), exception.getMessage(), null));
@@ -69,7 +82,7 @@ public class DepartmentMailController {
         throw new DepartmentBusinessException(403, "无权执行邮件操作");
     }
 
-    public record CreateMailRequest(@NotNull Long reportId, @NotNull Long versionId,
+    public record CreateMailRequest(@NotNull Long reportId,
                                     @NotBlank String subject, String mailBody,
                                     @NotEmpty List<@Valid RecipientRequest> recipients) {}
     public record RecipientRequest(@NotBlank String name, @NotBlank @Email String email) {}

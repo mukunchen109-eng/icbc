@@ -1,283 +1,32 @@
 package com.icbc.financialinfo.modules.review;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.icbc.financialinfo.modules.review.ReviewCommandModels.AddCommentRequest;
-import com.icbc.financialinfo.modules.review.ReviewCommandModels.AddCommentResult;
-import com.icbc.financialinfo.modules.review.ReviewCommandModels.ModifyArticleRequest;
-import com.icbc.financialinfo.modules.review.ReviewCommandModels.ModifyArticleResult;
-import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplaceArticleRequest;
-import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplaceArticleResult;
-import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplacementArticle;
-import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewRequest;
-import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewResult;
-import com.icbc.financialinfo.modules.review.ReviewCommandRepository.ArticleState;
-import com.icbc.financialinfo.modules.review.ReviewCommandRepository.NewsState;
-import com.icbc.financialinfo.modules.review.ReviewCommandRepository.ReportState;
-import com.icbc.financialinfo.modules.review.ReviewCommandRepository.TaskState;
-import com.icbc.financialinfo.modules.review.ReviewCommandRepository.VersionState;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.*;
+import com.icbc.financialinfo.modules.review.ReviewCommandRepository.*;
+import com.icbc.financialinfo.modules.review.ReviewQueryModels.ReviewRecordView;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Service
 public class ReviewCommandService {
-    private final ReviewCommandRepository repository;
-    private final ObjectMapper objectMapper;
+    private final ReviewCommandRepository repo;
+    private final ObjectMapper json;
+    public ReviewCommandService(ReviewCommandRepository repo,ObjectMapper json){this.repo=repo;this.json=json;}
+    private ReviewOperationException error(HttpStatus status,String message){return new ReviewOperationException(status,message);}
+    private void text(String value,String message){if(value==null||value.isBlank())throw error(HttpStatus.BAD_REQUEST,message);}
+    private void requireInformationManager(String role){if(!"INFO_MANAGER".equals(role))throw error(HttpStatus.FORBIDDEN,"部门负责人只能查看初审留痕并提交终审意见");}
+    private ReportState accessible(long reportId,String role){ReportState report=repo.report(reportId,false).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告不存在"));String prefix="DEPT_MANAGER".equals(role)?"FINAL_":"INITIAL_";if(!report.status().startsWith(prefix))throw error(HttpStatus.CONFLICT,"报告当前状态不可由该角色查看");return report;}
+    private ReportState writable(long reportId,long user,String role){repo.normalizeLegacyStatus(reportId);ReportState report=repo.report(reportId,true).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告不存在"));String prefix="DEPT_MANAGER".equals(role)?"FINAL_":"INITIAL_";boolean open=report.status().endsWith("PENDING")||report.status().endsWith("REVIEWING")||("INITIAL_REJECTED".equals(report.status())&&"INFO_MANAGER".equals(role));if(!report.status().startsWith(prefix)||!open)throw error(HttpStatus.CONFLICT,"报告当前状态不可由该角色审核");if(report.locked()==1&&report.lockedBy()!=null&&!report.lockedBy().equals(user))throw error(HttpStatus.CONFLICT,"报告已被其他审核人员锁定");return report;}
+    private String reviewing(ReportState report){return report.status().startsWith("FINAL_")?"FINAL_REVIEWING":"INITIAL_REVIEWING";}
 
-    public ReviewCommandService(ReviewCommandRepository repository, ObjectMapper objectMapper) {
-        this.repository = repository;
-        this.objectMapper = objectMapper;
-    }
-
-    @Transactional
-    public ModifyArticleResult modifyArticle(long taskId, long articleId, long operatorId,
-                                             ModifyArticleRequest request) {
-        requireText(request == null ? null : request.reason(), "修改原因不能为空");
-        TaskAndReport context = writableContext(taskId, operatorId);
-        VersionState sourceVersion = currentVersion(context.report());
-        ArticleState sourceArticle = currentArticle(articleId, context.task(), sourceVersion);
-
-        String title = optionalText(request.title(), sourceArticle.title(), 500, "报告标题不能为空");
-        String summary = optionalText(
-                request.summaryContent(), sourceArticle.summaryContent(), null, "报告摘要不能为空");
-        String sourceLabel = optionalText(
-                request.sourceLabel(), sourceArticle.sourceLabel(), 100, "来源标签不能为空");
-        if (title.equals(sourceArticle.title())
-                && summary.equals(sourceArticle.summaryContent())
-                && sourceLabel.equals(sourceArticle.sourceLabel())) {
-            throw badRequest("未提供需要修改的报告条目内容");
-        }
-
-        int newVersionNo = sourceVersion.versionNo() + 1;
-        long newVersionId = repository.createVersion(
-                context.task().reportId(), newVersionNo,
-                versionType(context.task().reviewStage()), operatorId);
-        repository.copyArticlesWithModification(
-                sourceVersion.id(), newVersionId, articleId, title, summary, sourceLabel);
-        ArticleState newArticle = repository.findArticle(newVersionId, sourceArticle.sequenceNo())
-                .orElseThrow(() -> new IllegalStateException("新版本报告条目复制失败"));
-        repository.advanceReportVersion(context.task().reportId(), newVersionNo, operatorId);
-        repository.insertReviewRecord(
-                taskId, context.task().reportId(), newVersionId, newArticle.id(), operatorId,
-                "MODIFY", articleSnapshot(sourceArticle), articleSnapshot(newArticle),
-                request.reason().trim(), null);
-        return new ModifyArticleResult(newArticle.id(), newVersionId, newVersionNo);
-    }
-
-    @Transactional
-    public AddCommentResult addComment(long taskId, long operatorId, AddCommentRequest request) {
-        requireText(request == null ? null : request.commentText(), "批注内容不能为空");
-        if (request.articleId() == null) throw badRequest("报告条目ID不能为空");
-        TaskState task = assignedPendingTask(taskId, operatorId, false);
-        ArticleState article = repository.findArticle(request.articleId())
-                .orElseThrow(() -> notFound("报告条目不存在"));
-        if (!article.reportId().equals(task.reportId())) throw notFound("报告条目不存在");
-
-        long recordId = repository.insertReviewRecord(
-                task.id(), task.reportId(), article.versionId(), article.id(), operatorId,
-                "ANNOTATE", null, null, null, request.commentText().trim());
-        return new AddCommentResult(recordId);
-    }
-
-    @Transactional
-    public ReplaceArticleResult replaceArticle(long taskId, long articleId, long operatorId,
-                                               ReplaceArticleRequest request) {
-        requireText(request == null ? null : request.reason(), "替换原因不能为空");
-        if (request.newNewsId() == null) throw badRequest("替换资讯ID不能为空");
-        TaskAndReport context = writableContext(taskId, operatorId);
-        VersionState sourceVersion = currentVersion(context.report());
-        ArticleState sourceArticle = currentArticle(articleId, context.task(), sourceVersion);
-        NewsState news = repository.findNews(request.newNewsId())
-                .orElseThrow(() -> notFound("替换资讯不存在"));
-
-        int newVersionNo = sourceVersion.versionNo() + 1;
-        long newVersionId = repository.createVersion(
-                context.task().reportId(), newVersionNo,
-                versionType(context.task().reviewStage()), operatorId);
-        repository.copyArticlesWithReplacement(
-                sourceVersion.id(), newVersionId, articleId, news);
-        ArticleState newArticle = repository.findArticle(newVersionId, sourceArticle.sequenceNo())
-                .orElseThrow(() -> new IllegalStateException("新版本报告条目复制失败"));
-        repository.advanceReportVersion(context.task().reportId(), newVersionNo, operatorId);
-        repository.insertReviewRecord(
-                taskId, context.task().reportId(), newVersionId, newArticle.id(), operatorId,
-                "REPLACE", articleSnapshot(sourceArticle), articleSnapshot(newArticle),
-                request.reason().trim(), null);
-        return new ReplaceArticleResult(
-                articleId, newArticle.id(), news.id(), newVersionId, newVersionNo);
-    }
-
-    @Transactional(readOnly = true)
-    public List<ReplacementArticle> replacementArticles(
-            long taskId, long operatorId, String category, String keyword) {
-        TaskState task = assignedPendingTask(taskId, operatorId, false);
-        ReportState report = repository.findReport(task.reportId())
-                .orElseThrow(() -> notFound("报告不存在"));
-        VersionState currentVersion = currentVersion(report);
-        List<ReplacementArticle> records = repository.findReplacementArticles(
-                currentVersion.id(), report.reportDate(), category, keyword);
-        if (records.isEmpty()) {
-            throw new ReviewOperationException(
-                    HttpStatus.NOT_FOUND, "未找到可替换资讯", List.of());
-        }
-        return records;
-    }
-
-    @Transactional
-    public SubmitReviewResult submit(
-            long taskId, long operatorId, String operatorRole, SubmitReviewRequest request) {
-        if (request == null || request.decision() == null) throw badRequest("审核决定不能为空");
-        String decision = request.decision().trim().toUpperCase();
-        if (!"APPROVE".equals(decision) && !"REJECT".equals(decision)) {
-            throw badRequest("审核决定只能是 APPROVE 或 REJECT");
-        }
-        TaskState task = repository.findTaskForUpdate(taskId)
-                .orElseThrow(() -> notFound("审核任务不存在"));
-        if (!task.reviewerId().equals(operatorId)) {
-            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "无权提交该审核任务");
-        }
-        String expectedRole = "FINAL".equals(task.reviewStage()) ? "DEPT_MANAGER" : "INFO_MANAGER";
-        if (!expectedRole.equals(operatorRole)) {
-            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "当前角色与审核阶段不匹配");
-        }
-        if (!"PENDING".equals(task.status()) && !"REVIEWING".equals(task.status())) {
-            throw new ReviewOperationException(HttpStatus.CONFLICT, "审核任务已经处理");
-        }
-        ReportState report = repository.lockReport(task.reportId())
-                .orElseThrow(() -> notFound("报告不存在"));
-        String expectedReportStatus = "FINAL".equals(task.reviewStage())
-                ? "FINAL_REVIEW" : "INITIAL_REVIEW";
-        if (!expectedReportStatus.equals(report.status())) {
-            throw new ReviewOperationException(HttpStatus.CONFLICT, "报告当前状态与审核阶段不匹配");
-        }
-        if (report.locked() == 1 && report.lockedBy() != null
-                && !report.lockedBy().equals(operatorId)) {
-            throw new ReviewOperationException(HttpStatus.CONFLICT, "报告已被其他审核人员锁定");
-        }
-        VersionState currentVersion = currentVersion(report);
-        String comment = request.comment() == null || request.comment().isBlank()
-                ? null : request.comment().trim();
-        String taskStatus = "APPROVE".equals(decision) ? "APPROVED" : "REJECTED";
-        String reportStatus;
-        Long nextTaskId = null;
-        if ("REJECT".equals(decision)) {
-            reportStatus = "REJECTED";
-        } else if ("INITIAL".equals(task.reviewStage())) {
-            reportStatus = "FINAL_REVIEW";
-            long finalReviewer = repository.findActiveReviewer("DEPT_MANAGER")
-                    .orElseThrow(() -> new ReviewOperationException(
-                            HttpStatus.CONFLICT, "没有可分配的部门负责人"));
-            nextTaskId = repository.createReviewTask(
-                    task.reportId(), currentVersion.id(), "FINAL", finalReviewer);
-        } else {
-            reportStatus = "APPROVED";
-        }
-        repository.completeTask(task.id(), currentVersion.id(), taskStatus, comment);
-        repository.transitionReport(task.reportId(), reportStatus);
-        repository.insertReviewRecord(
-                task.id(), task.reportId(), currentVersion.id(), null, operatorId,
-                "APPROVE".equals(decision) ? "SUBMIT" : "RETURN",
-                null, null, comment, null);
-        return new SubmitReviewResult(
-                task.id(), task.reportId(), currentVersion.id(), taskStatus,
-                reportStatus, nextTaskId);
-    }
-
-    private TaskAndReport writableContext(long taskId, long operatorId) {
-        TaskState task = assignedPendingTask(taskId, operatorId, true);
-        ReportState report = repository.lockReport(task.reportId())
-                .orElseThrow(() -> notFound("报告不存在"));
-        if (report.locked() == 1
-                && report.lockedBy() != null
-                && !report.lockedBy().equals(operatorId)) {
-            throw new ReviewOperationException(
-                    HttpStatus.CONFLICT, "报告已被其他审核人员锁定");
-        }
-        String expectedStatus = versionType(task.reviewStage());
-        if (!expectedStatus.equals(report.status())) {
-            throw new ReviewOperationException(HttpStatus.CONFLICT, "报告当前审核阶段不匹配");
-        }
-        return new TaskAndReport(task, report);
-    }
-
-    private TaskState assignedPendingTask(long taskId, long operatorId, boolean forUpdate) {
-        TaskState task = (forUpdate
-                ? repository.findTaskForUpdate(taskId)
-                : repository.findTask(taskId))
-                .orElseThrow(() -> notFound("审核任务不存在"));
-        if (!task.reviewerId().equals(operatorId)) {
-            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "无权操作该审核任务");
-        }
-        if (!"PENDING".equals(task.status())) {
-            throw new ReviewOperationException(HttpStatus.CONFLICT, "审核任务已完成");
-        }
-        return task;
-    }
-
-    private VersionState currentVersion(ReportState report) {
-        return repository.findVersion(report.id(), report.currentVersionNo())
-                .orElseThrow(() -> notFound("报告当前版本不存在"));
-    }
-
-    private ArticleState currentArticle(
-            long articleId, TaskState task, VersionState currentVersion) {
-        ArticleState article = repository.findArticle(articleId)
-                .orElseThrow(() -> notFound("报告条目不存在"));
-        if (!article.reportId().equals(task.reportId())) throw notFound("报告条目不存在");
-        if (!article.versionId().equals(currentVersion.id())) {
-            throw new ReviewOperationException(
-                    HttpStatus.CONFLICT, "报告版本已更新，请刷新后重试");
-        }
-        return article;
-    }
-
-    private String versionType(String reviewStage) {
-        return "FINAL".equals(reviewStage) ? "FINAL_REVIEW" : "INITIAL_REVIEW";
-    }
-
-    private String optionalText(
-            String requested, String current, Integer maxLength, String emptyMessage) {
-        if (requested == null) return current;
-        String value = requested.trim();
-        if (value.isEmpty()) throw badRequest(emptyMessage);
-        if (maxLength != null && value.length() > maxLength) {
-            throw badRequest(emptyMessage.replace("不能为空", "长度超出限制"));
-        }
-        return value;
-    }
-
-    private void requireText(String value, String message) {
-        if (value == null || value.isBlank()) throw badRequest(message);
-    }
-
-    private String articleSnapshot(ArticleState article) {
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("articleId", article.id());
-        snapshot.put("newsId", article.newsId());
-        snapshot.put("sequenceNo", article.sequenceNo());
-        snapshot.put("category", article.category());
-        snapshot.put("title", article.title());
-        snapshot.put("summaryContent", article.summaryContent());
-        snapshot.put("sourceLabel", article.sourceLabel());
-        try {
-            return objectMapper.writeValueAsString(snapshot);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("审核记录序列化失败", exception);
-        }
-    }
-
-    private ReviewOperationException badRequest(String message) {
-        return new ReviewOperationException(HttpStatus.BAD_REQUEST, message);
-    }
-
-    private ReviewOperationException notFound(String message) {
-        return new ReviewOperationException(HttpStatus.NOT_FOUND, message);
-    }
-
-    private record TaskAndReport(TaskState task, ReportState report) {}
+    @Transactional public ModifyArticleResult modifyArticle(long reportId,long articleId,long user,String role,ModifyArticleRequest request){requireInformationManager(role);text(request==null?null:request.reason(),"修改原因不能为空");ReportState report=writable(reportId,user,role);ArticleState article=repo.article(articleId).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告条目不存在"));if(!article.reportId().equals(reportId))throw error(HttpStatus.NOT_FOUND,"报告条目不存在");String title=request.title()==null||request.title().isBlank()?article.title():request.title().trim();String summary=request.summaryContent()==null||request.summaryContent().isBlank()?article.summaryContent():request.summaryContent().trim();if(title.equals(article.title())&&summary.equals(article.summaryContent()))throw error(HttpStatus.BAD_REQUEST,"未提供需要修改的内容");repo.updateArticle(articleId,title,summary);repo.status(reportId,reviewing(report),user);repo.record(reportId,articleId,user,"MODIFY",snapshot(article),snapshot(new ArticleState(article.id(),article.reportId(),article.newsId(),article.category(),title,summary)),request.reason().trim(),null);return new ModifyArticleResult(articleId,reportId,reviewing(report));}
+    @Transactional public AddCommentResult addComment(long reportId,long user,String role,AddCommentRequest request){requireInformationManager(role);text(request==null?null:request.commentText(),"批注内容不能为空");ReportState report=writable(reportId,user,role);ArticleState article=repo.article(request.articleId()).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告条目不存在"));if(!article.reportId().equals(reportId))throw error(HttpStatus.NOT_FOUND,"报告条目不存在");repo.status(reportId,reviewing(report),user);String selected=request.selectedText()==null||request.selectedText().isBlank()?null:request.selectedText().trim();return new AddCommentResult(repo.record(reportId,article.id(),user,"COMMENT",selected,null,null,request.commentText().trim()));}
+    @Transactional public AddMarkResult addMark(long reportId,long user,String role,AddMarkRequest request){requireInformationManager(role);text(request==null?null:request.selectedText(),"请选择需要标记的文字");String type=request.markType()==null?"":request.markType().trim().toUpperCase();if(!Set.of("RED","MODIFY").contains(type))throw error(HttpStatus.BAD_REQUEST,"标记类型错误");ReportState report=writable(reportId,user,role);ArticleState article=repo.article(request.articleId()).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告条目不存在"));if(!article.reportId().equals(reportId))throw error(HttpStatus.NOT_FOUND,"报告条目不存在");repo.status(reportId,reviewing(report),user);return new AddMarkResult(repo.record(reportId,article.id(),user,"RED".equals(type)?"MARK_RED":"MARK_MODIFY",request.selectedText().trim(),null,null,null));}
+    @Transactional public ReplaceArticleResult replaceArticle(long reportId,long articleId,long user,String role,ReplaceArticleRequest request){requireInformationManager(role);text(request==null?null:request.reason(),"替换原因不能为空");ReportState report=writable(reportId,user,role);ArticleState article=repo.article(articleId).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告条目不存在"));if(!article.reportId().equals(reportId))throw error(HttpStatus.NOT_FOUND,"报告条目不存在");NewsState news=repo.news(request.newNewsId()).orElseThrow(()->error(HttpStatus.NOT_FOUND,"替换资讯不存在"));repo.replaceArticle(articleId,news);repo.status(reportId,reviewing(report),user);repo.record(reportId,articleId,user,"REPLACE",snapshot(article),snapshot(news),request.reason().trim(),null);return new ReplaceArticleResult(articleId,articleId,news.id(),reportId,reviewing(report));}
+    @Transactional(readOnly=true) public List<ReplacementArticle> replacementArticles(long reportId,long user,String role,String category,String keyword){requireInformationManager(role);ReportState report=accessible(reportId,role);return repo.replacements(reportId,report.reportDate(),category,keyword);}
+    @Transactional(readOnly=true) public List<ReviewRecordView> reviewRecords(long reportId,long user,String role){ReportState report=repo.report(reportId,false).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告不存在"));boolean allowed="INFO_MANAGER".equals(role)&&report.status().startsWith("INITIAL_")||"DEPT_MANAGER".equals(role)&&(report.status().startsWith("FINAL_")||"INITIAL_REJECTED".equals(report.status()));if(!allowed)throw error(HttpStatus.CONFLICT,"报告当前状态不可由该角色查看");return repo.records(reportId);}
+    @Transactional public SubmitReviewResult submit(long reportId,long user,String role,SubmitReviewRequest request){ReportState report=writable(reportId,user,role);String decision=request==null||request.decision()==null?"":request.decision().trim().toUpperCase();String next,comment=request==null||request.comment()==null?null:request.comment().trim();repo.record(reportId,null,user,"SUBMIT",report.status(),decision,null,comment);if("INFO_MANAGER".equals(role)){if(!"APPROVE".equals(decision))throw error(HttpStatus.BAD_REQUEST,"初审只能提交终审");next="FINAL_PENDING";repo.completeAssignment(reportId,user,comment);repo.assignToRole(reportId,"DEPT_MANAGER",comment);}else if("APPROVE".equals(decision)){next="FINAL_APPROVED";repo.completeAssignment(reportId,user,comment);}else if("REJECT".equals(decision)){next="INITIAL_REJECTED";repo.completeAssignment(reportId,user,comment);repo.assignToUsername(reportId,"info01",comment);}else throw error(HttpStatus.BAD_REQUEST,"审核决定错误");repo.finish(reportId,next);return new SubmitReviewResult(reportId,report.status(),next);}
+    private String snapshot(Object value){try{return json.writeValueAsString(value);}catch(Exception e){throw new IllegalStateException("审核记录序列化失败",e);}}
 }
