@@ -9,6 +9,8 @@ import com.icbc.financialinfo.modules.review.ReviewCommandModels.ModifyArticleRe
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplaceArticleRequest;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplaceArticleResult;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplacementArticle;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewRequest;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewResult;
 import com.icbc.financialinfo.modules.review.ReviewCommandRepository.ArticleState;
 import com.icbc.financialinfo.modules.review.ReviewCommandRepository.NewsState;
 import com.icbc.financialinfo.modules.review.ReviewCommandRepository.ReportState;
@@ -124,6 +126,66 @@ public class ReviewCommandService {
                     HttpStatus.NOT_FOUND, "未找到可替换资讯", List.of());
         }
         return records;
+    }
+
+    @Transactional
+    public SubmitReviewResult submit(
+            long taskId, long operatorId, String operatorRole, SubmitReviewRequest request) {
+        if (request == null || request.decision() == null) throw badRequest("审核决定不能为空");
+        String decision = request.decision().trim().toUpperCase();
+        if (!"APPROVE".equals(decision) && !"REJECT".equals(decision)) {
+            throw badRequest("审核决定只能是 APPROVE 或 REJECT");
+        }
+        TaskState task = repository.findTaskForUpdate(taskId)
+                .orElseThrow(() -> notFound("审核任务不存在"));
+        if (!task.reviewerId().equals(operatorId)) {
+            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "无权提交该审核任务");
+        }
+        String expectedRole = "FINAL".equals(task.reviewStage()) ? "DEPT_MANAGER" : "INFO_MANAGER";
+        if (!expectedRole.equals(operatorRole)) {
+            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "当前角色与审核阶段不匹配");
+        }
+        if (!"PENDING".equals(task.status()) && !"REVIEWING".equals(task.status())) {
+            throw new ReviewOperationException(HttpStatus.CONFLICT, "审核任务已经处理");
+        }
+        ReportState report = repository.lockReport(task.reportId())
+                .orElseThrow(() -> notFound("报告不存在"));
+        String expectedReportStatus = "FINAL".equals(task.reviewStage())
+                ? "FINAL_REVIEW" : "INITIAL_REVIEW";
+        if (!expectedReportStatus.equals(report.status())) {
+            throw new ReviewOperationException(HttpStatus.CONFLICT, "报告当前状态与审核阶段不匹配");
+        }
+        if (report.locked() == 1 && report.lockedBy() != null
+                && !report.lockedBy().equals(operatorId)) {
+            throw new ReviewOperationException(HttpStatus.CONFLICT, "报告已被其他审核人员锁定");
+        }
+        VersionState currentVersion = currentVersion(report);
+        String comment = request.comment() == null || request.comment().isBlank()
+                ? null : request.comment().trim();
+        String taskStatus = "APPROVE".equals(decision) ? "APPROVED" : "REJECTED";
+        String reportStatus;
+        Long nextTaskId = null;
+        if ("REJECT".equals(decision)) {
+            reportStatus = "REJECTED";
+        } else if ("INITIAL".equals(task.reviewStage())) {
+            reportStatus = "FINAL_REVIEW";
+            long finalReviewer = repository.findActiveReviewer("DEPT_MANAGER")
+                    .orElseThrow(() -> new ReviewOperationException(
+                            HttpStatus.CONFLICT, "没有可分配的部门负责人"));
+            nextTaskId = repository.createReviewTask(
+                    task.reportId(), currentVersion.id(), "FINAL", finalReviewer);
+        } else {
+            reportStatus = "APPROVED";
+        }
+        repository.completeTask(task.id(), currentVersion.id(), taskStatus, comment);
+        repository.transitionReport(task.reportId(), reportStatus);
+        repository.insertReviewRecord(
+                task.id(), task.reportId(), currentVersion.id(), null, operatorId,
+                "APPROVE".equals(decision) ? "SUBMIT" : "RETURN",
+                null, null, comment, null);
+        return new SubmitReviewResult(
+                task.id(), task.reportId(), currentVersion.id(), taskStatus,
+                reportStatus, nextTaskId);
     }
 
     private TaskAndReport writableContext(long taskId, long operatorId) {

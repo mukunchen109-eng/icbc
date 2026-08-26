@@ -8,6 +8,11 @@ public final class ReviewQueryModels {
 
     public record PageData<T>(long total, int pageNum, int pageSize, List<T> records) {}
 
+    public record AssignedTaskSummary(
+            Long id, Long reportId, Long versionId, Integer versionNo,
+            String reviewStage, String status, String reportDate, String reportTitle,
+            String submittedAt, String completedAt, String wordFilePath, String pdfFilePath) {}
+
     public record ReportSummary(
             Long id, String reportDate, String reportTitle, String status,
             Integer currentVersionNo, Integer locked, Long lockedBy, String lockedAt,

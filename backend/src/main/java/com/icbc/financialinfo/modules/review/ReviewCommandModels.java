@@ -20,4 +20,10 @@ public final class ReviewCommandModels {
 
     public record ReplacementArticle(
             Long newsId, String newsDate, String title, String industry, String area) {}
+
+    public record SubmitReviewRequest(String decision, String comment) {}
+
+    public record SubmitReviewResult(
+            Long taskId, Long reportId, Long versionId, String taskStatus,
+            String reportStatus, Long nextTaskId) {}
 }

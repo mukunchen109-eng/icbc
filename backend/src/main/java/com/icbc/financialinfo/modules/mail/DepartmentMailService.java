@@ -1,8 +1,6 @@
 package com.icbc.financialinfo.modules.mail;
 
-import com.icbc.financialinfo.modules.review.DepartmentAuthorizationService;
 import com.icbc.financialinfo.modules.review.DepartmentBusinessException;
-import com.icbc.financialinfo.modules.user.UserRepository.UserAccount;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -17,16 +15,12 @@ import java.util.List;
 @Service
 public class DepartmentMailService {
     private final JdbcTemplate jdbcTemplate;
-    private final DepartmentAuthorizationService authorizationService;
 
-    public DepartmentMailService(JdbcTemplate jdbcTemplate,
-                                 DepartmentAuthorizationService authorizationService) {
+    public DepartmentMailService(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
-        this.authorizationService = authorizationService;
     }
 
-    public List<RecipientOption> listRecipients(String authorization) {
-        authorizationService.requireDepartmentManager(authorization);
+    public List<RecipientOption> listRecipients() {
         return jdbcTemplate.query("""
                 SELECT id,recipient_name,recipient_email
                   FROM mail_recipient
@@ -35,8 +29,7 @@ public class DepartmentMailService {
                 rs.getLong("id"), rs.getString("recipient_name"), rs.getString("recipient_email")));
     }
 
-    public RecipientOption addRecipient(String authorization, String name, String email) {
-        UserAccount manager = authorizationService.requireDepartmentManager(authorization);
+    public RecipientOption addRecipient(long managerId, String name, String email) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         try {
             jdbcTemplate.update(connection -> {
@@ -45,7 +38,7 @@ public class DepartmentMailService {
                                 "VALUES(?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", Statement.RETURN_GENERATED_KEYS);
                 statement.setString(1, name.trim());
                 statement.setString(2, email.trim());
-                statement.setLong(3, manager.id());
+                statement.setLong(3, managerId);
                 return statement;
             }, keyHolder);
         } catch (DuplicateKeyException exception) {
@@ -56,13 +49,12 @@ public class DepartmentMailService {
     }
 
     @Transactional
-    public CreateResult create(String authorization, CreateRequest request) {
-        UserAccount manager = authorizationService.requireDepartmentManager(authorization);
+    public CreateResult create(long managerId, CreateRequest request) {
         ReportForMail report = findReport(request.reportId(), request.versionId());
         Integer approved = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM review_task WHERE report_id=? AND version_id=? AND review_stage='FINAL' " +
                         "AND reviewer_id=? AND status='APPROVED'",
-                Integer.class, request.reportId(), request.versionId(), manager.id());
+                Integer.class, request.reportId(), request.versionId(), managerId);
         if (approved == null || approved == 0) {
             throw new DepartmentBusinessException(409, "报告尚未通过当前负责人的终审，不能创建发送任务");
         }
@@ -82,7 +74,7 @@ public class DepartmentMailService {
                  GROUP BY m.id,m.status ORDER BY m.id DESC LIMIT 1
                 """, (rs, rowNum) -> new CreateResult(
                 rs.getLong("id"), rs.getString("status"), rs.getInt("recipient_count")),
-                request.reportId(), request.versionId(), manager.id());
+                request.reportId(), request.versionId(), managerId);
         if (!existing.isEmpty()) {
             long existingId = existing.get(0).id();
             jdbcTemplate.update("DELETE FROM mail_log WHERE mail_task_id=?", existingId);
@@ -106,7 +98,7 @@ public class DepartmentMailService {
             statement.setLong(2, report.versionId());
             statement.setString(3, request.subject().trim());
             statement.setString(4, request.mailBody());
-            statement.setLong(5, manager.id());
+            statement.setLong(5, managerId);
             return statement;
         }, keyHolder);
         if (keyHolder.getKey() == null) throw new DepartmentBusinessException(500, "数据库未返回邮件任务ID");
@@ -125,8 +117,7 @@ public class DepartmentMailService {
     }
 
     @Transactional
-    public SendResult send(String authorization, long taskId) {
-        UserAccount manager = authorizationService.requireDepartmentManager(authorization);
+    public SendResult send(long managerId, long taskId) {
         MailTask task = jdbcTemplate.query("""
                 SELECT m.id,m.report_id,m.version_id,m.subject,m.mail_body,m.status,m.created_by,
                        m.created_at
@@ -137,7 +128,7 @@ public class DepartmentMailService {
                 rs.getString("subject"), rs.getString("mail_body"), rs.getString("status"),
                 rs.getLong("created_by")), taskId)
                 .stream().findFirst().orElseThrow(() -> new DepartmentBusinessException(404, "邮件任务不存在"));
-        if (task.createdBy() != manager.id()) throw new DepartmentBusinessException(403, "无权发送其他用户创建的邮件任务");
+        if (task.createdBy() != managerId) throw new DepartmentBusinessException(403, "无权发送其他用户创建的邮件任务");
         if (!"PENDING".equals(task.status()) && !"PARTIAL_FAILED".equals(task.status()) && !"FAILED".equals(task.status())) {
             throw new DepartmentBusinessException(409, "邮件任务已完成或正在发送，请勿重复发送");
         }

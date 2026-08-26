@@ -10,7 +10,7 @@ const loading = ref(false)
 const error = ref('')
 const records = ref([])
 const total = ref(0)
-const query = reactive({ pageNum: 1, pageSize: 10, status: auth.user?.roleCode === 'DEPT_MANAGER' ? '' : 'PENDING' })
+const query = reactive({ pageNum: 1, pageSize: 10, status: '' })
 const isInitial = computed(() => auth.user?.roleCode === 'INFO_MANAGER')
 const stage = computed(() => isInitial.value ? 'INITIAL' : 'FINAL')
 const stageName = computed(() => isInitial.value ? '初审' : '终审')
@@ -29,31 +29,6 @@ const showRecipientForm = ref(false)
 const recipients = reactive([])
 const newRecipient = reactive({ name: '', email: '' })
 const selectedRecipientCount = computed(() => recipients.filter(item => item.selected).length)
-const demoTasks = {
-  INITIAL: {
-    id: 90001, reportId: 10001, versionId: 20001, versionNo: 1,
-    reviewStage: 'INITIAL', status: 'PENDING', reportDate: '2026-08-25',
-    reportTitle: '每日资讯摘要 - 20260825（初审测试）', submittedAt: '2026-08-25 09:35:00', demo: true
-  },
-  DEPT: [
-    { id: 4, reportId: 4, versionId: 21, versionNo: 1, reviewStage: 'FINAL', status: 'PENDING', reportDate: '2026-08-23', reportTitle: '每日资讯摘要-20260823（终审页面测试-待审核）', submittedAt: '2026-08-25 13:05:00', databaseFallback: true },
-    { id: 5, reportId: 5, versionId: 22, versionNo: 1, reviewStage: 'FINAL', status: 'REVIEWING', reportDate: '2026-08-22', reportTitle: '每日资讯摘要-20260822（终审页面测试-审核中）', submittedAt: '2026-08-25 12:10:00', databaseFallback: true },
-    { id: 6, reportId: 6, versionId: 23, versionNo: 1, reviewStage: 'FINAL', status: 'APPROVED', reportDate: '2026-08-21', reportTitle: '每日资讯摘要-20260821（终审页面测试-待发送）', submittedAt: '2026-08-25 11:15:00', completedAt: '2026-08-25 11:45:00', databaseFallback: true },
-    { id: 7, reportId: 7, versionId: 24, versionNo: 1, reviewStage: 'FINAL', status: 'REJECTED', reportDate: '2026-08-20', reportTitle: '每日资讯摘要-20260820（终审页面测试-已退回）', submittedAt: '2026-08-25 10:20:00', completedAt: '2026-08-25 10:50:00', databaseFallback: true },
-    { id: 8, reportId: 8, versionId: 26, versionNo: 1, reviewStage: 'FINAL', status: 'ARCHIVED', reportDate: '2026-08-19', reportTitle: '每日资讯摘要-20260819（终审页面测试-已归档）', submittedAt: '2026-08-25 09:25:00', completedAt: '2026-08-25 10:00:00', databaseFallback: true }
-  ]
-}
-
-function matchingDemoTasks() {
-  const source = isInitial.value ? [demoTasks.INITIAL] : demoTasks.DEPT
-  return query.status ? source.filter(item => item.status === query.status) : source
-}
-
-function useDemoTasks() {
-  records.value = matchingDemoTasks()
-  total.value = records.value.length
-}
-
 async function load() {
   loading.value = true
   error.value = ''
@@ -62,10 +37,10 @@ async function load() {
     if (data.code !== 200) throw new Error(data.message || '查询失败')
     records.value = data.data?.records || []
     total.value = Number(data.data?.total || 0)
-    if (!records.value.length) useDemoTasks()
   } catch (requestError) {
-    useDemoTasks()
-    error.value = ''
+    records.value = []
+    total.value = 0
+    error.value = requestError.response?.data?.message || requestError.message || '查询失败'
   } finally {
     loading.value = false
   }
@@ -169,11 +144,11 @@ onMounted(load)
     </header>
     <main class="task-list-main">
       <section class="task-list-intro">
-        <div><span class="task-eyebrow">{{ stageName }}工作台</span><h1>{{ isInitial ? '我的待审核报告' : '我的终审与待发送报告' }}</h1><p>{{ isInitial ? '核验报告内容、政治方向和数据一致性，处理完成后提交终审。' : '复核报告并完成定稿；对已完成终审的报告选择接收人员并创建发送任务。' }}</p></div>
+        <div><span class="task-eyebrow">{{ stageName }}工作台</span><h1>{{ isInitial ? '我的审核报告' : '我的终审与待发送报告' }}</h1><p>{{ isInitial ? '查看分配给当前账号的全部初审报告，并按任务状态进行筛选。' : '复核报告并完成定稿；对已完成终审的报告选择接收人员并创建发送任务。' }}</p></div>
         <div class="task-count"><b>{{ total }}</b><span>项任务</span></div>
       </section>
       <section class="task-list-panel">
-        <div class="task-list-toolbar"><div><h2>{{ isInitial ? '审核任务' : '终审与发送任务' }}</h2><span>{{ isInitial ? '仅显示分配给当前账号的初审任务' : '处理终审任务，并发送已经完成终审的报告' }}</span></div><label>任务状态<select v-model="query.status" @change="changeStatus"><template v-if="isInitial"><option value="PENDING">待审核</option><option value="ANNOTATING">批阅中</option><option value="REVIEWING">审核中</option><option value="REJECTED">已退回</option><option value="APPROVED">待发送</option><option value="">全部状态</option></template><template v-else><option value="">全部任务</option><option value="PENDING">待审核</option><option value="REVIEWING">审核中</option><option value="APPROVED">待发送</option><option value="REJECTED">已退回</option><option value="ARCHIVED">已归档</option></template></select></label><button class="outline-button" :disabled="loading" @click="load">刷新</button></div>
+        <div class="task-list-toolbar"><div><h2>{{ isInitial ? '审核任务' : '终审与发送任务' }}</h2><span>{{ isInitial ? '显示分配给当前账号的全部初审任务' : '处理终审任务，并发送已经完成终审的报告' }}</span></div><label>任务状态<select v-model="query.status" @change="changeStatus"><template v-if="isInitial"><option value="">全部任务</option><option value="PENDING">待审核</option><option value="ANNOTATING">批阅中</option><option value="REVIEWING">审核中</option><option value="REJECTED">已退回</option><option value="APPROVED">待发送</option></template><template v-else><option value="">全部任务</option><option value="PENDING">待审核</option><option value="REVIEWING">审核中</option><option value="APPROVED">待发送</option><option value="REJECTED">已退回</option><option value="ARCHIVED">已归档</option></template></select></label><button class="outline-button" :disabled="loading" @click="load">刷新</button></div>
         <div v-if="error" class="task-error"><b>暂时无法加载任务</b><span>{{ error }}</span><button @click="load">重新加载</button></div>
         <div v-else-if="loading" class="task-empty"><span class="task-spinner"></span><b>正在加载审核任务…</b></div>
         <div v-else-if="!records.length" class="task-empty"><span class="task-empty-icon">✓</span><b>当前没有{{ query.status ? taskStatusText(query.status) : '' }}任务</b><p>新的{{ stageName }}任务到达后会显示在这里。</p></div>

@@ -30,7 +30,7 @@ public class ReviewAuthorizationFilter extends OncePerRequestFilter {
     private static final Pattern ISSUE_RESOLVE = Pattern.compile(
             "^/api/review-issues/[^/]+/resolve$");
     private static final Pattern REVIEW_TASK_ACTION = Pattern.compile(
-            "^/api/review-tasks/[^/]+/(comments|replacement-articles)$");
+            "^/api/review-tasks/[^/]+/(comments|replacement-articles|submit)$");
     private static final Pattern REVIEW_TASK_ARTICLE_ACTION = Pattern.compile(
             "^/api/review-tasks/[^/]+/articles/[^/]+(?:/replace)?$");
 
@@ -47,6 +47,9 @@ public class ReviewAuthorizationFilter extends OncePerRequestFilter {
         if ("OPTIONS".equals(request.getMethod())) return true;
         String path = request.getRequestURI().substring(request.getContextPath().length());
         boolean reviewApi = "/api/reports/review".equals(path)
+                || "/api/review-tasks/my".equals(path)
+                || path.startsWith("/api/mail-tasks")
+                || path.startsWith("/api/mail-recipients")
                 || REPORT_SUBRESOURCE.matcher(path).matches()
                 || VERSION_REVIEW_RESOURCE.matcher(path).matches()
                 || ARTICLE_SOURCE.matcher(path).matches()

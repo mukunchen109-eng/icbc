@@ -1,7 +1,8 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import http from '../api/http'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -10,17 +11,23 @@ const canEdit = computed(() => auth.user?.roleCode === 'INFO_MANAGER')
 const isFinalReviewer = computed(() => auth.user?.roleCode === 'DEPT_MANAGER')
 const selectedReport = computed(() => ({
   taskId: route.params.taskId,
-  title: route.query.title || '每日资讯摘要',
-  date: route.query.date || '待确认',
-  versionNo: route.query.versionNo || '1'
+  reportId: Number(route.query.reportId),
+  title: reportDetail.value?.reportTitle || route.query.title || '每日资讯摘要',
+  date: reportDetail.value?.reportDate || route.query.date || '待确认',
+  versionNo: reportDetail.value?.currentVersionNo || route.query.versionNo || '1'
 }))
-const sensitiveWords = ['绝对安全', '保证收益', '内幕消息', '暴涨', '稳赚不赔', '重大利好']
-const dataChecks = [
-  { field: '成交额环比', draft: '7.2%', source: '6.8%', detail: '草稿“成交额环比”为 7.2%，原始资讯为 6.8%。' },
-  { field: '发布日期', draft: '8 月 24 日', source: '8 月 23 日', detail: '草稿引用日期与原始资讯发布日期不一致。' }
-]
+const loading = ref(true)
+const loadError = ref('')
+const reportDetail = ref(null)
+const articles = ref([])
+const sources = ref([])
+const issues = ref([])
+const currentVersionId = ref(Number(route.query.versionId) || null)
+const reviewComment = ref('')
+const submitting = ref(false)
+const checking = ref(false)
 const changeInfo = '修改人：资讯管理员 info01；修改时间：2026-08-24 16:25'
-const draft = ref(`<section class="entry"><h3>01　货币市场与流动性</h3><p>【每日金融】央行公开市场操作保持流动性合理充裕，银行间市场资金面平稳。<span class="annotation-mark" data-annotation-id="1">市场参与者应持续关注</span>资金价格变化。</p></section><section class="entry"><h3>02　金融板块表现</h3><p>【每日金融】金融板块交投活跃，成交额较上一交易日增长<span class="data-alert" data-tooltip="成交额环比：草稿 7.2%，原文 6.8%">7.2%</span>。机构普遍认为后续市场<span class="sensitive-alert" data-tooltip="敏感词：绝对安全">绝对安全</span>。</p></section><section class="entry"><h3>03　宏观经济观察</h3><p>【每日经济】宏观指标显示经济修复态势延续，市场持续关注需求恢复、行业景气度与外部环境变化。</p></section><section class="entry"><h3>04　政策动态</h3><p>【政策参考】有关部门发布重点领域政策解读，明确支持方向并要求相关单位结合实际做好落实。发布日期为<span class="data-alert" data-tooltip="发布日期：草稿 8 月 24 日，原文 8 月 23 日">8 月 24 日</span>。</p></section><section class="entry"><h3>05　风险提示</h3><p>【风险提示】需关注外围市场波动、重点行业估值变化以及突发事件对市场情绪的影响，避免使用<span class="sensitive-alert" data-tooltip="敏感词：重大利好">重大利好</span>等表述。</p></section><section class="entry"><h3>06　编辑结论</h3><p>综合各项资讯，建议按照审校意见调整数据和表述，并在终审确认后向指定范围分发。</p></section>`)
+const draft = ref('')
 const annotationText = ref('')
 const selectedText = ref('')
 const annotations = ref([{ id: 1, text: '市场参与者应持续关注', note: '建议补充关注的具体指标。', replies: [], resolved: false }])
@@ -34,7 +41,41 @@ const saving = ref(false)
 const saveNotice = ref('')
 const leaveDialogVisible = ref(false)
 const lastDraftPayload = ref(null)
+const selectedArticleSequence = ref(null)
 let hoverTimer
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
+}
+function renderDraft() {
+  draft.value = articles.value.map(item => `<section class="entry" data-sequence="${item.sequenceNo}"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.summaryContent)}</p><small>${escapeHtml(item.sourceLabel || '')}</small></section>`).join('')
+}
+async function loadWorkspace() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    if (!selectedReport.value.reportId) throw new Error('缺少报告编号')
+    const detailResponse = await http.get(`/reports/${selectedReport.value.reportId}/review-detail`)
+    if (detailResponse.data?.code !== 200) throw new Error(detailResponse.data?.message || '报告详情查询失败')
+    reportDetail.value = detailResponse.data.data
+    currentVersionId.value = reportDetail.value.currentVersion?.id || currentVersionId.value
+    if (!currentVersionId.value) throw new Error('报告当前版本不存在')
+    const [articleResponse, issueResponse] = await Promise.all([
+      http.get(`/report-versions/${currentVersionId.value}/articles`),
+      http.get(`/report-versions/${currentVersionId.value}/issues`)
+    ])
+    articles.value = articleResponse.data?.data || []
+    issues.value = issueResponse.data?.data || []
+    sources.value = (await Promise.all(articles.value.map(async article => {
+      try { return (await http.get(`/report-articles/${article.id}/source`)).data?.data }
+      catch { return null }
+    }))).filter(Boolean)
+    renderDraft()
+    await nextTick()
+  } catch (requestError) {
+    loadError.value = requestError.response?.data?.message || requestError.message || '审核工作台加载失败'
+  } finally { loading.value = false }
+}
 
 function syncScroll(side) {
   if (syncLock.value) return
@@ -58,7 +99,13 @@ function handleDraftInput() {
   persistDraft()
   markDirty()
 }
-function captureSelection() { selectedText.value = window.getSelection()?.toString().trim() || '' }
+function captureSelection() {
+  const selection = window.getSelection()
+  selectedText.value = selection?.toString().trim() || ''
+  const node = selection?.anchorNode
+  const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node
+  selectedArticleSequence.value = Number(element?.closest?.('.entry')?.dataset.sequence) || null
+}
 function wrapSelection(className, tooltip, annotationId = null) {
   const selection = window.getSelection()
   if (!selection?.rangeCount || selection.isCollapsed) return false
@@ -76,8 +123,18 @@ function wrapSelection(className, tooltip, annotationId = null) {
 function markRed() { if (wrapSelection('manual-red', `人工标红；${changeInfo}`)) captureSelection() }
 function markModify() { if (wrapSelection('change-mark', changeInfo)) captureSelection() }
 function openAnnotation() { captureSelection(); if (selectedText.value) showAnnotation.value = true }
-function addAnnotation() {
+async function addAnnotation() {
   if (!annotationText.value.trim() || !selectedText.value) return
+  const article = articles.value.find(item => item.sequenceNo === selectedArticleSequence.value)
+  if (!article) { saveNotice.value = '未找到批注对应的报告条目'; return }
+  try {
+    await http.post(`/review-tasks/${selectedReport.value.taskId}/comments`, {
+      articleId: article.id, commentText: annotationText.value.trim()
+    })
+  } catch (requestError) {
+    saveNotice.value = requestError.response?.data?.message || '批注保存失败'
+    return
+  }
   const annotation = { id: Date.now(), text: selectedText.value, note: annotationText.value, replies: [], resolved: false }
   wrapSelection('annotation-mark', `批注：${annotationText.value}`, annotation.id)
   annotations.value.unshift(annotation)
@@ -102,58 +159,129 @@ async function saveDraft() {
   persistDraft()
   saving.value = true
   saveNotice.value = ''
-  const payload = {
-    taskId: selectedReport.value.taskId,
-    status: 'ANNOTATING',
-    draftContent: draft.value,
-    annotations: annotations.value,
-    updatedAt: new Date().toISOString()
-  }
   try {
-    // 审核草稿接口及数据库接入后，在此提交 payload。
-    // 例如：await http.put(`/review-tasks/${payload.taskId}/draft`, payload)
-    lastDraftPayload.value = payload
-    await Promise.resolve()
+    const sections = [...(draftEditor.value?.querySelectorAll('.entry') || [])]
+    const changes = sections.map(section => ({
+      sequenceNo: Number(section.dataset.sequence),
+      title: section.querySelector('h3')?.innerText.trim() || '',
+      summaryContent: section.querySelector('p')?.innerText.trim() || '',
+      sourceLabel: section.querySelector('small')?.innerText.trim() || ''
+    })).filter(change => {
+      const source = articles.value.find(item => item.sequenceNo === change.sequenceNo)
+      return source && (source.title !== change.title || source.summaryContent !== change.summaryContent || (source.sourceLabel || '') !== change.sourceLabel)
+    })
+    for (const change of changes) {
+      const current = articles.value.find(item => item.sequenceNo === change.sequenceNo)
+      const { data } = await http.put(`/review-tasks/${selectedReport.value.taskId}/articles/${current.id}`, {
+        title: change.title, summaryContent: change.summaryContent,
+        sourceLabel: change.sourceLabel, reason: '审核工作台人工修改'
+      })
+      currentVersionId.value = data.data.versionId
+      const refreshed = await http.get(`/report-versions/${currentVersionId.value}/articles`)
+      articles.value = refreshed.data?.data || []
+    }
+    lastDraftPayload.value = { taskId: selectedReport.value.taskId, changes }
+    if (changes.length) await loadWorkspace()
+    else renderDraft()
     dirty.value = false
-    saveNotice.value = '草稿已保存'
+    saveNotice.value = changes.length ? `已保存 ${changes.length} 条修改并生成新版本` : '没有需要保存的修改'
     return true
+  } catch (requestError) {
+    saveNotice.value = requestError.response?.data?.message || '草稿保存失败'
+    return false
   } finally { saving.value = false }
 }
-function submitInitialReview() { alert('已提交终审（演示）') }
-function confirmFinalReview() { alert('已确认终审通过（演示）') }
-function returnForRevision() { alert('已退回修改（演示）') }
+async function runCheck() {
+  checking.value = true
+  try {
+    await http.post(`/report-versions/${currentVersionId.value}/check`)
+    const { data } = await http.get(`/report-versions/${currentVersionId.value}/issues`)
+    issues.value = data?.data || []
+    saveNotice.value = `检测完成，发现 ${issues.value.length} 项问题`
+  } catch (requestError) {
+    saveNotice.value = requestError.response?.data?.message || '检测失败'
+  } finally { checking.value = false }
+}
+async function resolveIssueItem(issue) {
+  try {
+    await http.put(`/review-issues/${issue.id}/resolve`)
+    issue.resolved = 1
+    saveNotice.value = '问题已标记为已处理'
+  } catch (requestError) { saveNotice.value = requestError.response?.data?.message || '问题处理失败' }
+}
+async function replaceSelectedArticle() {
+  const current = articles.value.find(item => item.sequenceNo === selectedArticleSequence.value)
+  if (!current) { saveNotice.value = '请先在需要替换的报告条目中选择文字'; return }
+  try {
+    const { data } = await http.get(`/review-tasks/${selectedReport.value.taskId}/replacement-articles`, {
+      params: { category: current.category || '' }
+    })
+    const candidates = data?.data || []
+    if (!candidates.length) { saveNotice.value = '没有可替换的资讯'; return }
+    const message = candidates.slice(0, 10).map(item => `${item.newsId}：${item.title}`).join('\n')
+    const selectedId = window.prompt(`输入替换资讯ID：\n${message}`)
+    if (!selectedId) return
+    const reason = window.prompt('填写替换原因')
+    if (!reason?.trim()) return
+    const response = await http.post(`/review-tasks/${selectedReport.value.taskId}/articles/${current.id}/replace`, {
+      newNewsId: Number(selectedId), reason: reason.trim()
+    })
+    currentVersionId.value = response.data.data.versionId
+    await loadWorkspace()
+    saveNotice.value = '资讯已替换并生成新版本'
+  } catch (requestError) { saveNotice.value = requestError.response?.data?.message || '替换资讯失败' }
+}
+async function submitDecision(decision) {
+  if (dirty.value && canEdit.value) {
+    const saved = await saveDraft()
+    if (!saved) return
+  }
+  submitting.value = true
+  try {
+    const { data } = await http.post(`/review-tasks/${selectedReport.value.taskId}/submit`, {
+      decision, comment: reviewComment.value
+    })
+    if (data?.code !== 200) throw new Error(data?.message || '审核提交失败')
+    window.alert(decision === 'APPROVE'
+      ? (isFinalReviewer.value ? '终审已通过，报告进入待发送状态' : '初审已通过，已生成终审任务')
+      : '报告已退回')
+    backToTasks()
+  } catch (requestError) {
+    saveNotice.value = requestError.response?.data?.message || requestError.message || '审核提交失败'
+  } finally { submitting.value = false }
+}
+function submitInitialReview() { submitDecision('APPROVE') }
+function confirmFinalReview() { submitDecision('APPROVE') }
+function returnForRevision() { submitDecision('REJECT') }
 function logout() { auth.logout(); router.push('/login') }
 function backToTasks() { router.push('/review-tasks') }
 function requestBackToTasks() { if (canEdit.value && dirty.value) leaveDialogVisible.value = true; else backToTasks() }
 async function saveAndBack() { await saveDraft(); leaveDialogVisible.value = false; backToTasks() }
 function discardAndBack() { dirty.value = false; leaveDialogVisible.value = false; backToTasks() }
+
+onMounted(loadWorkspace)
 </script>
 
 <template>
   <div class="review-shell">
     <header class="review-header"><div><strong>金融智讯</strong><span>人机协同审核工作台</span></div><div class="review-user"><span class="role-badge">{{ auth.user?.roleName }}</span><span>{{ auth.user?.username }}</span><button class="text-button" @click="logout">退出</button></div></header>
-    <section class="review-context"><div><span class="eyebrow">待审核报告 · 任务 #{{ selectedReport.taskId }}</span><h1>{{ selectedReport.title }}</h1><p>报告日期：{{ selectedReport.date }}　·　版本：V{{ selectedReport.versionNo }}　·　当前环节：{{ isFinalReviewer ? '终审' : '初审' }}　·　{{ canEdit ? '可编辑并留痕' : '只读查看修改痕迹与批注' }}</p></div><div class="context-actions"><span v-if="saveNotice" class="draft-save-notice">{{ saveNotice }}</span><button v-if="canEdit" class="outline-button" :disabled="saving" @click="saveDraft">{{ saving ? '保存中…' : '保存草稿' }}</button><button v-if="canEdit" @click="submitInitialReview">提交终审</button><template v-else><button class="outline-button" @click="returnForRevision">退回</button><button @click="confirmFinalReview">确认终审</button></template><button class="outline-button" @click="requestBackToTasks">返回列表</button></div></section>
+    <section class="review-context"><div><span class="eyebrow">待审核报告 · 任务 #{{ selectedReport.taskId }}</span><h1>{{ selectedReport.title }}</h1><p>报告日期：{{ selectedReport.date }}　·　版本：V{{ selectedReport.versionNo }}　·　当前环节：{{ isFinalReviewer ? '终审' : '初审' }}　·　{{ canEdit ? '可编辑并留痕' : '只读查看修改痕迹与批注' }}</p></div><div class="context-actions"><span v-if="saveNotice" class="draft-save-notice">{{ saveNotice }}</span><button v-if="canEdit" class="outline-button" :disabled="saving || loading" @click="saveDraft">{{ saving ? '保存中…' : '保存草稿' }}</button><button v-if="canEdit" :disabled="submitting || loading" @click="submitInitialReview">{{ submitting ? '提交中…' : '提交终审' }}</button><template v-else><button class="outline-button" :disabled="submitting || loading" @click="returnForRevision">退回</button><button :disabled="submitting || loading" @click="confirmFinalReview">{{ submitting ? '提交中…' : '确认终审' }}</button></template><button class="outline-button" @click="requestBackToTasks">返回列表</button></div></section>
     <div class="review-legend"><span class="legend-sensitive">敏感词</span><span class="legend-data">数据不一致</span><span class="legend-change">修改/批注</span></div>
-    <main class="review-workspace">
+    <div v-if="loadError" class="task-error"><b>审核数据加载失败</b><span>{{ loadError }}</span><button @click="loadWorkspace">重新加载</button></div>
+    <div v-else-if="loading" class="task-empty"><span class="task-spinner"></span><b>正在加载报告与原始资讯…</b></div>
+    <main v-else class="review-workspace">
       <article class="document-panel draft-panel"><div class="document-title"><div><h2>报告草稿</h2></div><span class="status-dot">{{ canEdit ? '初审中' : '待终审' }}</span></div>
-        <div v-if="canEdit" class="review-toolbar"><button class="tool-button red-tool" @mousedown.prevent @click="markRed">标红</button><button class="tool-button" @mousedown.prevent @click="markModify">标记修改</button><button class="tool-button" @mousedown.prevent @click="openAnnotation">添加批注</button></div>
+        <div v-if="canEdit" class="review-toolbar"><button class="tool-button red-tool" @mousedown.prevent @click="markRed">标红</button><button class="tool-button" @mousedown.prevent @click="markModify">标记修改</button><button class="tool-button" @mousedown.prevent @click="openAnnotation">添加批注</button><button class="tool-button" @click="replaceSelectedArticle">替换资讯</button><button class="tool-button" :disabled="checking" @click="runCheck">{{ checking ? '检测中…' : '重新检测' }}</button></div>
         <div ref="draftEditor" class="draft-editor" :contenteditable="canEdit" @input="handleDraftInput" @mouseup="captureSelection" @scroll="syncScroll('left')" @mouseover="showAnnotationBubble" @mouseleave="hideAnnotationBubble" v-html="draft"></div>
         <div v-if="showAnnotation" class="annotation-composer"><span>批注对象：{{ selectedText }}</span><input v-model="annotationText" placeholder="输入批注内容"><button @click="addAnnotation">添加</button></div>
-        <div class="issue-summary"><div><b>敏感词库</b><span v-for="word in sensitiveWords" :key="word" class="sensitive-chip">{{ word }}</span></div><div><b>数据核验</b><span v-for="item in dataChecks" :key="item.field" class="data-chip" :title="item.detail">{{ item.field }}：{{ item.draft }} / {{ item.source }}</span></div></div>
+        <div class="issue-summary"><div><b>敏感内容</b><button v-for="item in issues.filter(issue => issue.issueType === 'SENSITIVE_CONTENT' && !issue.resolved)" :key="item.id" class="sensitive-chip" :title="`${item.message}；点击标记处理`" @click="resolveIssueItem(item)">{{ item.matchedText }}</button></div><div><b>数据核验</b><button v-for="item in issues.filter(issue => issue.issueType !== 'SENSITIVE_CONTENT' && !issue.resolved)" :key="item.id" class="data-chip" :title="`${item.message}；点击标记处理`" @click="resolveIssueItem(item)">{{ item.issueType }}：{{ item.matchedText }}</button></div></div>
       </article>
       <article class="document-panel source-panel"><div class="document-title"><div><h2>原始资讯全文</h2></div><span class="source-count">6 条资讯</span></div>
-        <div ref="sourcePanel" class="source-content" @scroll="syncScroll('right')">
-          <section><div class="source-meta"><b>01</b><span>每日金融 · 09:12</span></div><h3>央行开展公开市场操作，维护流动性合理充裕</h3><p>为维护月末流动性合理充裕，中国人民银行以利率招标方式开展公开市场操作。市场资金面总体平稳，机构对后续政策节奏保持关注。</p></section>
-          <section><div class="source-meta"><b>02</b><span>每日金融 · 10:35</span></div><h3>金融板块交投活跃，市场情绪保持谨慎</h3><p>盘面显示金融相关板块成交有所增加，成交额较上一交易日增长<span class="source-data" data-tooltip="成交额环比：草稿 7.2%，原文 6.8%">6.8%</span>。投资者仍重点关注宏观数据、政策预期以及外围市场变化。</p></section>
-          <section><div class="source-meta"><b>03</b><span>每日经济 · 14:20</span></div><h3>宏观指标显示经济修复态势延续</h3><p>最新发布的相关指标反映经济运行总体平稳。分析人士表示，后续仍需关注需求恢复、行业景气度与外部环境变化。</p></section>
-          <section><div class="source-meta"><b>04</b><span>政策参考 · 16:10</span></div><h3>有关部门发布重点领域政策解读</h3><p>政策文件于<span class="source-data" data-tooltip="发布日期：草稿 8 月 24 日，原文 8 月 23 日">8 月 23 日</span>发布，明确了重点领域的支持方向，并要求各相关单位结合实际做好落实。</p></section>
-          <section><div class="source-meta"><b>05</b><span>风险监测 · 16:35</span></div><h3>市场风险提示及舆情观察</h3><p>有关市场传言包含“<span class="sensitive-alert" data-tooltip="敏感词：重大利好">重大利好</span>”“<span class="sensitive-alert" data-tooltip="敏感词：保证收益">保证收益</span>”等表述，需避免在正式报告中直接引用。</p></section>
-          <section><div class="source-meta"><b>06</b><span>编辑说明 · 17:00</span></div><h3>资讯编辑与分发要求</h3><p>各条资讯需经事实核验后进入报告，引用数据、日期与机构名称应与原文保持一致，并记录所有审核修改。</p></section>
-        </div>
+        <div ref="sourcePanel" class="source-content" @scroll="syncScroll('right')"><section v-for="(source, index) in sources" :key="source.articleId"><div class="source-meta"><b>{{ String(index + 1).padStart(2, '0') }}</b><span>{{ source.industry || '资讯' }} · {{ source.newsDate }}</span></div><h3>{{ source.title }}</h3><p>{{ source.originalContent || source.content }}</p></section><section v-if="!sources.length"><p>当前版本暂无关联原始资讯。</p></section></div>
       </article>
     </main>
     <div v-if="hoverBubble" class="annotation-bubble" :style="{ left: `${hoverBubble.left}px`, top: `${hoverBubble.top}px` }" @mouseenter="keepAnnotationBubble" @mouseleave="hideAnnotationBubble"><b>批注</b><p>{{ hoverBubble.item.note }}</p><small>{{ hoverBubble.item.replies.length ? `已有 ${hoverBubble.item.replies.length} 条回复` : '暂无回复' }}</small><div><button @click="reply(hoverBubble.item)">回复</button><button @click="resolve(hoverBubble.item)">{{ hoverBubble.item.resolved ? '取消解决' : '解决' }}</button></div></div>
-    <footer v-if="isFinalReviewer" class="review-footer"><label>审核意见<input placeholder="填写修改意见或审核说明（选填）"></label><button class="danger-button" @click="returnForRevision">退回修改</button></footer>
+    <footer class="review-footer"><label>审核意见<input v-model="reviewComment" placeholder="填写修改意见或审核说明（选填）"></label><button v-if="isFinalReviewer" class="danger-button" :disabled="submitting" @click="returnForRevision">退回修改</button></footer>
     <Teleport to="body"><div v-if="leaveDialogVisible" class="review-leave-mask" @click.self="leaveDialogVisible = false"><section class="review-leave-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-dialog-title"><h3 id="leave-dialog-title">尚未保存草稿</h3><p>当前报告有未保存的修改，返回列表前是否保存草稿？</p><div class="review-leave-actions"><button class="outline-button" @click="leaveDialogVisible = false">取消</button><button class="outline-button" @click="discardAndBack">不保存返回</button><button :disabled="saving" @click="saveAndBack">{{ saving ? '保存中…' : '保存并返回' }}</button></div></section></div></Teleport>
   </div>
 </template>

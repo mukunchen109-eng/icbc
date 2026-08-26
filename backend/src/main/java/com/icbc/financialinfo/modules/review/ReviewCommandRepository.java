@@ -234,6 +234,48 @@ public class ReviewCommandRepository {
         return generatedId(keyHolder, "审核记录ID");
     }
 
+    public void completeTask(long taskId, long versionId, String status, String comment) {
+        jdbcTemplate.update("""
+                UPDATE review_task
+                   SET version_id=?,status=?,review_comment=?,completed_at=CURRENT_TIMESTAMP
+                 WHERE id=?
+                """, versionId, status, comment, taskId);
+    }
+
+    public void transitionReport(long reportId, String status) {
+        jdbcTemplate.update("""
+                UPDATE report
+                   SET status=?,locked=0,locked_by=NULL,locked_at=NULL,updated_at=CURRENT_TIMESTAMP
+                 WHERE id=?
+                """, status, reportId);
+    }
+
+    public Optional<Long> findActiveReviewer(String roleCode) {
+        return jdbcTemplate.query("""
+                SELECT u.id
+                  FROM sys_user u JOIN sys_role r ON r.id=u.role_id
+                 WHERE r.role_code=? AND u.status=1
+                 ORDER BY u.id LIMIT 1
+                """, (rs, rowNum) -> rs.getLong("id"), roleCode).stream().findFirst();
+    }
+
+    public long createReviewTask(long reportId, long versionId, String stage, long reviewerId) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO review_task(
+                        report_id,version_id,review_stage,reviewer_id,status,submitted_at)
+                    VALUES(?,?,?,?,'PENDING',CURRENT_TIMESTAMP)
+                    """, Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1, reportId);
+            statement.setLong(2, versionId);
+            statement.setString(3, stage);
+            statement.setLong(4, reviewerId);
+            return statement;
+        }, keyHolder);
+        return generatedId(keyHolder, "审核任务ID");
+    }
+
     public List<ReplacementArticle> findReplacementArticles(
             long currentVersionId, String reportDate, String category, String keyword) {
         List<String> conditions = new ArrayList<>();

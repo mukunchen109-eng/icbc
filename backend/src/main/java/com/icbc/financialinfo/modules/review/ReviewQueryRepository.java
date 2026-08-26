@@ -1,6 +1,7 @@
 package com.icbc.financialinfo.modules.review;
 
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ArticleSource;
+import com.icbc.financialinfo.modules.review.ReviewQueryModels.AssignedTaskSummary;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ReportArticle;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ReportSummary;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ReviewTaskDetail;
@@ -60,6 +61,53 @@ public class ReviewQueryRepository {
     public Optional<ReportSummary> findReport(long reportId) {
         return jdbcTemplate.query(REPORT_COLUMNS + " WHERE r.id = ?", REPORT_MAPPER, reportId)
                 .stream().findFirst();
+    }
+
+    public List<AssignedTaskSummary> findAssignedTasks(
+            long reviewerId, String stage, String status, int pageNum, int pageSize) {
+        List<Object> parameters = new ArrayList<>();
+        parameters.add(reviewerId);
+        parameters.add(stage);
+        String statusSql = "";
+        if (status != null && !status.isBlank()) {
+            statusSql = " AND t.status=?";
+            parameters.add(status.trim().toUpperCase());
+        }
+        parameters.add(pageSize);
+        parameters.add((pageNum - 1) * pageSize);
+        return jdbcTemplate.query("""
+                SELECT t.id,t.report_id,t.version_id,v.version_no,t.review_stage,t.status,
+                       DATE_FORMAT(r.report_date,'%Y-%m-%d') report_date,r.report_title,
+                       DATE_FORMAT(t.submitted_at,'%Y-%m-%d %H:%i:%s') submitted_at,
+                       DATE_FORMAT(t.completed_at,'%Y-%m-%d %H:%i:%s') completed_at,
+                       v.word_file_path,v.pdf_file_path
+                  FROM review_task t
+                  JOIN report r ON r.id=t.report_id
+                  JOIN report_version v ON v.id=t.version_id
+                 WHERE t.reviewer_id=? AND t.review_stage=?
+                """ + statusSql + " ORDER BY t.submitted_at DESC,t.id DESC LIMIT ? OFFSET ?",
+                (rs, rowNum) -> new AssignedTaskSummary(
+                        rs.getLong("id"), rs.getLong("report_id"), rs.getLong("version_id"),
+                        rs.getInt("version_no"), rs.getString("review_stage"), rs.getString("status"),
+                        rs.getString("report_date"), rs.getString("report_title"),
+                        rs.getString("submitted_at"), rs.getString("completed_at"),
+                        rs.getString("word_file_path"), rs.getString("pdf_file_path")),
+                parameters.toArray());
+    }
+
+    public long countAssignedTasks(long reviewerId, String stage, String status) {
+        List<Object> parameters = new ArrayList<>();
+        parameters.add(reviewerId);
+        parameters.add(stage);
+        String statusSql = "";
+        if (status != null && !status.isBlank()) {
+            statusSql = " AND status=?";
+            parameters.add(status.trim().toUpperCase());
+        }
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM review_task WHERE reviewer_id=? AND review_stage=?" + statusSql,
+                Long.class, parameters.toArray());
+        return count == null ? 0 : count;
     }
 
     public Optional<VersionDetail> findVersion(long reportId, int versionNo) {

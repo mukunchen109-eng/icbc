@@ -8,9 +8,13 @@ import com.icbc.financialinfo.modules.review.ReviewCommandModels.ModifyArticleRe
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplaceArticleRequest;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplaceArticleResult;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplacementArticle;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewRequest;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewResult;
 import com.icbc.financialinfo.modules.review.ReviewIssueModels.CheckResult;
 import com.icbc.financialinfo.modules.review.ReviewIssueModels.ReviewIssue;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ArticleSource;
+import com.icbc.financialinfo.modules.review.ReviewQueryModels.AssignedTaskSummary;
+import com.icbc.financialinfo.modules.review.ReviewQueryModels.PageData;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ReportArticle;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
@@ -46,6 +50,28 @@ public class ReviewController {
     @GetMapping("/reviews/pending")
     public ApiResponse<Map<String, Integer>> pending() {
         return ApiResponse.ok(Map.of("initial", 0, "final", 0));
+    }
+
+    @GetMapping("/review-tasks/my")
+    public ApiResponse<PageData<AssignedTaskSummary>> myTasks(
+            @RequestParam(defaultValue = "") String stage,
+            @RequestParam(defaultValue = "") String status,
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize,
+            HttpServletRequest servletRequest) {
+        long reviewerId = operatorId(servletRequest);
+        String role = String.valueOf(servletRequest.getAttribute("reviewRoleCode"));
+        String assignedStage = "DEPT_MANAGER".equals(role) ? "FINAL" : "INITIAL";
+        if (!stage.isBlank() && !assignedStage.equalsIgnoreCase(stage.trim())) {
+            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "无权查询其他审核阶段的任务");
+        }
+        int safePageNum = Math.max(pageNum, 1);
+        int safePageSize = Math.min(Math.max(pageSize, 1), 100);
+        return new ApiResponse<>(200, "查询成功", new PageData<>(
+                reviewRepository.countAssignedTasks(reviewerId, assignedStage, status),
+                safePageNum, safePageSize,
+                reviewRepository.findAssignedTasks(
+                        reviewerId, assignedStage, status, safePageNum, safePageSize)));
     }
 
     @GetMapping("/report-versions/{versionId}/articles")
@@ -101,6 +127,15 @@ public class ReviewController {
             HttpServletRequest servletRequest) {
         return new ApiResponse<>(200, "查询成功", commandService.replacementArticles(
                 taskId, operatorId(servletRequest), category, keyword));
+    }
+
+    @PostMapping("/review-tasks/{taskId}/submit")
+    public ApiResponse<SubmitReviewResult> submit(
+            @PathVariable long taskId, @RequestBody SubmitReviewRequest request,
+            HttpServletRequest servletRequest) {
+        return new ApiResponse<>(200, "审核提交成功", commandService.submit(
+                taskId, operatorId(servletRequest),
+                String.valueOf(servletRequest.getAttribute("reviewRoleCode")), request));
     }
 
     @GetMapping("/report-versions/{versionId}/issues")
