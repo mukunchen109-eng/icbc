@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
 
 @RestController
 @RequestMapping("/api/mail-logs")
@@ -15,8 +16,13 @@ public class MailLogController {
     public MailLogController(DepartmentMailService mailService) { this.mailService = mailService; }
 
     @PostMapping("/{id}/retry")
-    public ApiResponse<DepartmentMailService.MailLogDetail> retry(@PathVariable long id, HttpServletRequest request) {
-        return new ApiResponse<>(200, "重试记录已更新", mailService.retry(managerId(request), id));
+    public ResponseEntity<ApiResponse<DepartmentMailService.MailLogDetail>> retry(@PathVariable long id, HttpServletRequest request) {
+        try {
+            return ResponseEntity.ok(new ApiResponse<>(200, "邮件重试完成", mailService.retry(managerId(request), id)));
+        } catch (DepartmentBusinessException exception) {
+            return ResponseEntity.status(exception.status())
+                    .body(new ApiResponse<>(exception.status(), exception.getMessage(), null));
+        }
     }
 
     private long managerId(HttpServletRequest request) {
