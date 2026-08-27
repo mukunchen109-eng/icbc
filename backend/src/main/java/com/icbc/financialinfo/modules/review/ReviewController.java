@@ -12,6 +12,8 @@ import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplaceArticleR
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplacementArticle;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewRequest;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewResult;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.SaveDraftRequest;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.SaveDraftResult;
 import com.icbc.financialinfo.modules.review.ReviewIssueModels.CheckResult;
 import com.icbc.financialinfo.modules.review.ReviewIssueModels.ReviewIssue;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ArticleSource;
@@ -41,13 +43,15 @@ public class ReviewController {
     private final ReviewQueryRepository reviewRepository;
     private final ReviewCommandService commandService;
     private final ReviewIssueService issueService;
+    private final ReviewDraftService draftService;
 
     public ReviewController(
             ReviewQueryRepository reviewRepository, ReviewCommandService commandService,
-            ReviewIssueService issueService) {
+            ReviewIssueService issueService, ReviewDraftService draftService) {
         this.reviewRepository = reviewRepository;
         this.commandService = commandService;
         this.issueService = issueService;
+        this.draftService = draftService;
     }
 
     @GetMapping("/reviews/pending")
@@ -158,6 +162,14 @@ public class ReviewController {
             HttpServletRequest servletRequest) {
         return new ApiResponse<>(200, "审核标记保存成功",
                 commandService.addMark(reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest), request));
+    }
+
+    @PostMapping("/review-tasks/{taskId}/draft")
+    public ApiResponse<SaveDraftResult> saveDraft(
+            @PathVariable long taskId, @RequestBody SaveDraftRequest request,
+            HttpServletRequest servletRequest) {
+        return new ApiResponse<>(200, "草稿保存成功", draftService.save(
+                reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest), request));
     }
 
     @GetMapping("/review-tasks/{taskId}/records")
