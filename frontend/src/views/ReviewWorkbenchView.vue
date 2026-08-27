@@ -7,7 +7,7 @@ import http from '../api/http'
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
-const canEdit = computed(() => auth.user?.roleCode === 'INFO_MANAGER')
+const canEdit = computed(() => ['INFO_MANAGER', 'DEPT_MANAGER'].includes(auth.user?.roleCode))
 const isFinalReviewer = computed(() => auth.user?.roleCode === 'DEPT_MANAGER')
 const statusLabels = {
   GENERATED: '已生成', INITIAL_PENDING: '待初审', INITIAL_REVIEWING: '初审中',
@@ -400,7 +400,7 @@ onUnmounted(() => {
 <template>
   <div class="review-shell">
     <header class="review-header"><div><strong>金融智讯</strong><span>人机协同审核工作台</span></div><div class="review-user"><span class="role-badge">{{ auth.user?.roleName }}</span><span>{{ auth.user?.username }}</span><button class="text-button" @click="logout">退出</button></div></header>
-    <section class="review-context"><div><span class="eyebrow">待审核报告 · 报告 #{{ selectedReport.reportId }}</span><h1>{{ selectedReport.title }}</h1><p>报告日期：{{ selectedReport.date }}　·　状态：{{ statusText }}　·　当前环节：{{ isFinalReviewer ? '终审只读复核' : '初审编辑' }}　·　完整留痕</p></div><div class="context-actions"><span v-if="saveNotice" class="draft-save-notice">{{ saveNotice }}</span><button v-if="canEdit" class="outline-button" :disabled="saving || loading" @click="saveDraft">{{ saving ? '保存中…' : '保存草稿' }}</button><button v-if="!isFinalReviewer" :disabled="submitting || loading" @click="submitInitialReview">{{ submitting ? '提交中…' : '提交终审' }}</button><template v-else><button class="outline-button" :disabled="submitting || loading" @click="returnForRevision">退回</button><button :disabled="submitting || loading" @click="confirmFinalReview">{{ submitting ? '提交中…' : '确认终审' }}</button></template><button class="outline-button" @click="requestBackToTasks">返回列表</button></div></section>
+    <section class="review-context"><div><span class="eyebrow">待审核报告 · 报告 #{{ selectedReport.reportId }}</span><h1>{{ selectedReport.title }}</h1><p>报告日期：{{ selectedReport.date }}　·　状态：{{ statusText }}　·　当前环节：{{ isFinalReviewer ? '终审编辑' : '初审编辑' }}　·　完整留痕</p></div><div class="context-actions"><span v-if="saveNotice" class="draft-save-notice">{{ saveNotice }}</span><button v-if="canEdit" class="outline-button" :disabled="saving || loading" @click="saveDraft">{{ saving ? '保存中…' : '保存草稿' }}</button><button v-if="!isFinalReviewer" :disabled="submitting || loading" @click="submitInitialReview">{{ submitting ? '提交中…' : '提交终审' }}</button><template v-else><button class="outline-button" :disabled="submitting || loading" @click="returnForRevision">退回</button><button :disabled="submitting || loading" @click="confirmFinalReview">{{ submitting ? '提交中…' : '确认终审' }}</button></template><button class="outline-button" @click="requestBackToTasks">返回列表</button></div></section>
     <div class="review-legend"><span class="legend-sensitive">敏感词</span><span class="legend-data">数据不一致</span><span class="legend-change">修改/批注</span></div>
     <div v-if="loadError" class="task-error"><b>审核数据加载失败</b><span>{{ loadError }}</span><button @click="loadWorkspace">重新加载</button></div>
     <div v-else-if="loading" class="task-empty"><span class="task-spinner"></span><b>正在加载报告与原始资讯…</b></div>
