@@ -12,6 +12,8 @@ data-service/**/__pycache__/
 data-service/*.egg-info/
 data-service/.pytest_cache/
 data-service/.env
+data-service/app/preview.py
+data-service/output/
 *.pyc
 
 work/

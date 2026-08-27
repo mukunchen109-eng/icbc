@@ -4,19 +4,36 @@ from bs4 import BeautifulSoup
 import unicodedata
 from rapidfuzz import fuzz
 
-NOISE_PREFIXES = (
-    "广告",
-    "推广",
-    "商业推广",
-    "免责声明",
-    "责任编辑",
+NOISE_PREFIX_PATTERN = re.compile(
+    r"^(广告|推广|商业推广)\s*[:：]"
+)
+PROMOTION_MARKERS = (
+    "扫码关注","关注公众号","点击链接","客服热线","联系电话","微信号","长按识别二维码","扫描二维码"
 )
 SIMILARITY_THRESHOLD = 85
 
 
 def clean_line(text: str) -> str:
     text = text.replace("\xa0", " ")
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])","", text)  # 删除中文字符之间的空格
+    text = re.sub(r"\s+([，。；：！？、）”])",r"\1",text)  # 删除中文标点前后的空格
+    text = re.sub(r"([（“])\s+", r"\1",text,)
+
+    return text
+
+
+def is_noise_paragraph(text: str) -> bool:
+    if NOISE_PREFIX_PATTERN.match(text):
+        return True
+
+    if len(text) <= 120:
+        return any(
+            marker in text
+            for marker in PROMOTION_MARKERS
+        )
+
+    return False
 
 
 def make_article(
@@ -29,7 +46,7 @@ def make_article(
     cleaned_paragraphs = [
         text
         for text in paragraphs
-        if not text.startswith(NOISE_PREFIXES)
+        if not is_noise_paragraph(text)
     ]
     content = "\n".join(cleaned_paragraphs).strip()
 
