@@ -6,3 +6,7 @@ frontend/dist/
 springboot-vue/
 *.log
 work/
+backend/data/
+backend/config/application.yml
+.DS_Store
+.DS_Store
