@@ -1,6 +1,8 @@
 package com.icbc.financialinfo.modules.report;
-import com.icbc.financialinfo.common.ApiResponse;
-import org.springframework.web.bind.annotation.*;
-import java.util.Map;
-@RestController @RequestMapping("/api/reports")
-public class ReportController { @GetMapping public ApiResponse<Map<String,Object>> list() { return ApiResponse.ok(Map.of("items", java.util.List.of(), "total", 0)); } }
+import com.icbc.financialinfo.common.ApiResponse;import com.icbc.financialinfo.modules.review.ReviewQueryModels.*;import com.icbc.financialinfo.modules.review.ReviewQueryRepository;import org.springframework.http.*;import org.springframework.web.bind.annotation.*;import java.util.*;
+@RestController @RequestMapping("/api/reports") public class ReportController{
+ private final ReviewQueryRepository repository;public ReportController(ReviewQueryRepository r){repository=r;}
+ @GetMapping public ApiResponse<Map<String,Object>> list(){return ApiResponse.ok(Map.of("items",List.of(),"total",0));}
+ @GetMapping("/review") public ApiResponse<PageData<ReportSummary>> reviewReports(@RequestParam(defaultValue="1")int pageNum,@RequestParam(defaultValue="10")int pageSize,@RequestParam(defaultValue="")String reportDate,@RequestParam(defaultValue="")String status){int pn=Math.max(pageNum,1),ps=Math.min(Math.max(pageSize,1),100);return new ApiResponse<>(200,"查询成功",new PageData<>(repository.countReviewReports(reportDate,status),pn,ps,repository.findReviewPage(pn,ps,reportDate,status)));}
+ @GetMapping("/{id}/review-detail") public ResponseEntity<ApiResponse<ReportReviewDetail>> detail(@PathVariable long id){return repository.findReport(id).map(r->ResponseEntity.ok(new ApiResponse<>(200,"查询成功",new ReportReviewDetail(r.id(),r.reportDate(),r.reportTitle(),r.status(),r.locked(),r.lockedBy(),r.lockedAt(),r.createdAt(),r.updatedAt(),repository.findLatestDepartmentComment(id))))).orElseGet(()->ResponseEntity.status(404).body(new ApiResponse<>(404,"报告不存在",null)));}
+}

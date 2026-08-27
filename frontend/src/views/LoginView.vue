@@ -31,7 +31,7 @@ async function login() {
 
     const { token, expiresIn, user } = data.data
     auth.login(user, token, expiresIn)
-    router.push(isReviewUser(user) ? '/review-workbench' : '/dashboard')
+    router.push(isReviewUser(user) ? '/review-tasks' : '/dashboard')
   } catch (requestError) {
     error.value = requestError.response?.data?.message || '网络异常，请稍后重试'
   } finally {
