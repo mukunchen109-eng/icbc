@@ -29,7 +29,12 @@ const addingRecipient = ref(false)
 const showRecipientForm = ref(false)
 const recipients = reactive([])
 const newRecipient = reactive({ name: '', email: '' })
+const mailForm = reactive({ subject: '', body: '' })
+const mailTaskId = ref(null)
+const mailResults = ref([])
+const retryingLogId = ref(null)
 const selectedRecipientCount = computed(() => recipients.filter(item => item.selected).length)
+const allMailSucceeded = computed(() => mailResults.value.length > 0 && mailResults.value.every(item => item.status === 'SUCCESS'))
 async function load() {
   loading.value = true
   error.value = ''
@@ -60,6 +65,10 @@ async function openMailDialog(report) {
   mailSuccess.value = ''
   mailError.value = ''
   showRecipientForm.value = false
+  mailTaskId.value = null
+  mailResults.value = []
+  mailForm.subject = `${report.reportDate} ${report.reportTitle}`
+  mailForm.body = `您好，附件为 ${report.reportDate} 每日资讯摘要（PDF及Word版本），请查收。`
   mailDialog.value = true
   loadingRecipients.value = true
   recipients.splice(0)
@@ -100,10 +109,11 @@ async function addRecipient() {
 async function sendReport() {
   const selected = recipients.filter(item => item.selected)
   if (!selected.length) { mailError.value = '请至少选择一名接收人员'; return }
+  if (!mailForm.subject.trim()) { mailError.value = '请填写邮件主题'; return }
   const payload = {
     reportId: selectedReport.value.reportId,
-    subject: selectedReport.value.reportTitle,
-    mailBody: `您好，附件为 ${selectedReport.value.reportDate} 每日资讯摘要，请查收。`,
+    subject: mailForm.subject.trim(),
+    mailBody: mailForm.body.trim(),
     recipients: selected.map(({ name, email }) => ({ name, email }))
   }
   mailError.value = ''
@@ -112,12 +122,14 @@ async function sendReport() {
   try {
     const createResponse = await http.post('/mail-tasks', payload)
     if (createResponse.data?.code !== 200) throw new Error(createResponse.data?.message || '创建发送任务失败')
-    const mailTaskId = createResponse.data?.data?.id
-    if (!mailTaskId) throw new Error('后端未返回邮件任务编号')
+    const createdTaskId = createResponse.data?.data?.id
+    if (!createdTaskId) throw new Error('后端未返回邮件任务编号')
+    mailTaskId.value = createdTaskId
 
-    const sendResponse = await http.post(`/mail-tasks/${mailTaskId}/send`)
+    const sendResponse = await http.post(`/mail-tasks/${createdTaskId}/send`, null, { timeout: 120000 })
     if (sendResponse.data?.code !== 200) throw new Error(sendResponse.data?.message || '发送邮件失败')
     const result = sendResponse.data?.data || {}
+    mailResults.value = result.logs || []
     if (Number(result.failedCount || 0) > 0) {
       mailError.value = `发送完成：成功 ${result.successCount || 0} 封，失败 ${result.failedCount} 封。失败记录可稍后重试。`
     } else {
@@ -127,9 +139,32 @@ async function sendReport() {
     }
   } catch (requestError) {
     mailError.value = requestError.response?.data?.message || requestError.message || '发送失败，请稍后重试'
+    if (mailTaskId.value) {
+      try {
+        const { data } = await http.get(`/mail-tasks/${mailTaskId.value}/logs`)
+        mailResults.value = data?.data || []
+      } catch (_) { /* 保留原始发送错误 */ }
+    }
   } finally {
     sendingMail.value = false
   }
+}
+async function retryMail(log) {
+  retryingLogId.value = log.id
+  mailError.value = ''
+  try {
+    const { data } = await http.post(`/mail-logs/${log.id}/retry`, null, { timeout: 120000 })
+    if (data?.code !== 200) throw new Error(data?.message || '重试失败')
+    const index = mailResults.value.findIndex(item => item.id === log.id)
+    if (index >= 0) mailResults.value[index] = data.data
+    if (allMailSucceeded.value) {
+      mailSuccess.value = '全部收件人发送成功，报告及相关日志已归档。'
+      selectedReport.value.status = 'FINAL_ARCHIVED'
+      await load()
+    }
+  } catch (requestError) {
+    mailError.value = requestError.response?.data?.message || requestError.message || '邮件重试失败'
+  } finally { retryingLogId.value = null }
 }
 function logout() { auth.logout(); router.push('/login') }
 
@@ -156,6 +191,6 @@ onMounted(load)
         <div v-if="records.length" class="task-pagination"><span>共 {{ total }} 条</span><button class="outline-button" :disabled="query.pageNum === 1" @click="changePage(query.pageNum - 1)">上一页</button><b>{{ query.pageNum }} / {{ pages }}</b><button class="outline-button" :disabled="query.pageNum === pages" @click="changePage(query.pageNum + 1)">下一页</button></div>
       </section>
     </main>
-    <Teleport to="body"><div v-if="mailDialog" class="mail-modal-mask" @click.self="closeMailDialog"><section class="mail-modal"><header><div><h2>发送报告</h2></div><button class="mail-close" aria-label="关闭" :disabled="sendingMail" @click="closeMailDialog">×</button></header><div class="mail-report-card"><div><small>待发送报告</small><h3>{{ selectedReport?.reportTitle }}</h3><p>报告日期：{{ selectedReport?.reportDate }}</p></div><span>终审完成</span><dl><div><dt>报告编号</dt><dd>#{{ selectedReport?.reportId }}</dd></div><div><dt>当前状态</dt><dd>{{ selectedReport?.status }}</dd></div><div><dt>处理方式</dt><dd>记录发送结果，不连接真实邮箱</dd></div><div><dt>完成时间</dt><dd>{{ selectedReport?.completedAt || '-' }}</dd></div></dl></div><div class="mail-recipient-head"><div><h3>接收人员</h3><p>来自收件人通讯录 · 已选择 {{ selectedRecipientCount }} 人</p></div><div class="mail-recipient-actions"><label v-if="recipients.length"><input type="checkbox" :checked="selectedRecipientCount === recipients.length" @change="recipients.forEach(item => item.selected = $event.target.checked)"> 全选</label><button class="outline-button" @click="showRecipientForm = !showRecipientForm">{{ showRecipientForm ? '取消新增' : '+ 新增收件人' }}</button></div></div><form v-if="showRecipientForm" class="recipient-add recipient-add-collapsed" @submit.prevent="addRecipient"><div><input v-model="newRecipient.name" placeholder="收件人姓名"><input v-model="newRecipient.email" type="email" placeholder="收件邮箱"><button type="submit" class="outline-button" :disabled="addingRecipient">{{ addingRecipient ? '保存中…' : '保存' }}</button></div></form><div v-if="loadingRecipients" class="recipient-list">正在加载接收人员…</div><div v-else class="recipient-list"><label v-for="person in recipients" :key="person.id" class="recipient-row recipient-row-refined"><input v-model="person.selected" type="checkbox"><span class="recipient-avatar">{{ person.name.slice(0, 1) }}</span><span><b>{{ person.name }}</b><small>{{ person.email }}</small></span></label></div><p v-if="mailError" class="mail-message error">{{ mailError }}</p><p v-if="mailSuccess" class="mail-message success">{{ mailSuccess }}</p><footer><button class="outline-button" :disabled="sendingMail" @click="closeMailDialog">取消</button><button :disabled="!selectedRecipientCount || sendingMail || loadingRecipients" @click="sendReport">{{ sendingMail ? '正在处理…' : '确认发送' }}</button></footer></section></div></Teleport>
+    <Teleport to="body"><div v-if="mailDialog" class="mail-modal-mask" @click.self="closeMailDialog"><section class="mail-modal"><header><div><h2>发送报告</h2><p>最终报告与发送记录将自动归档</p></div><button class="mail-close" aria-label="关闭" :disabled="sendingMail" @click="closeMailDialog">×</button></header><div class="mail-report-card"><div><small>待发送报告</small><h3>{{ selectedReport?.reportTitle }}</h3><p>报告日期：{{ selectedReport?.reportDate }}</p></div><span>终审完成</span><dl><div><dt>报告编号</dt><dd>#{{ selectedReport?.reportId }}</dd></div><div><dt>当前状态</dt><dd>{{ selectedReport?.status }}</dd></div><div><dt>邮件附件</dt><dd>PDF + Word</dd></div><div><dt>归档内容</dt><dd>报告、数据及日志</dd></div></dl></div><div class="mail-compose"><label>邮件主题<input v-model="mailForm.subject" maxlength="300" :disabled="sendingMail || !!mailTaskId"></label><label>邮件正文<textarea v-model="mailForm.body" maxlength="10000" rows="3" :disabled="sendingMail || !!mailTaskId"></textarea></label></div><div class="mail-recipient-head"><div><h3>接收人员</h3><p>来自收件人通讯录 · 已选择 {{ selectedRecipientCount }} 人</p></div><div class="mail-recipient-actions"><label v-if="recipients.length"><input type="checkbox" :disabled="!!mailTaskId" :checked="selectedRecipientCount === recipients.length" @change="recipients.forEach(item => item.selected = $event.target.checked)"> 全选</label><button v-if="!mailTaskId" class="outline-button" @click="showRecipientForm = !showRecipientForm">{{ showRecipientForm ? '取消新增' : '+ 新增收件人' }}</button></div></div><form v-if="showRecipientForm && !mailTaskId" class="recipient-add recipient-add-collapsed" @submit.prevent="addRecipient"><div><input v-model="newRecipient.name" placeholder="收件人姓名"><input v-model="newRecipient.email" type="email" placeholder="收件邮箱"><button type="submit" class="outline-button" :disabled="addingRecipient">{{ addingRecipient ? '保存中…' : '保存' }}</button></div></form><div v-if="loadingRecipients" class="recipient-list">正在加载接收人员…</div><div v-else-if="!mailResults.length" class="recipient-list"><label v-for="person in recipients" :key="person.id" class="recipient-row recipient-row-refined"><input v-model="person.selected" type="checkbox" :disabled="!!mailTaskId"><span class="recipient-avatar">{{ person.name.slice(0, 1) }}</span><span><b>{{ person.name }}</b><small>{{ person.email }}</small></span></label></div><div v-else class="mail-result-list"><div v-for="item in mailResults" :key="item.id" class="mail-result-row"><span :class="['mail-result-status', item.status.toLowerCase()]">{{ item.status === 'SUCCESS' ? '成功' : '失败' }}</span><span><b>{{ item.recipientName || '收件人' }}</b><small>{{ item.recipientEmail }}</small><em v-if="item.errorMessage">{{ item.errorMessage }}</em></span><button v-if="item.status === 'FAILED'" class="outline-button" :disabled="retryingLogId === item.id" @click="retryMail(item)">{{ retryingLogId === item.id ? '重试中…' : '重试' }}</button></div></div><p v-if="mailError" class="mail-message error">{{ mailError }}</p><p v-if="mailSuccess" class="mail-message success">{{ mailSuccess }}</p><footer><button class="outline-button" :disabled="sendingMail" @click="closeMailDialog">{{ mailResults.length ? '关闭' : '取消' }}</button><button v-if="!mailTaskId" :disabled="!selectedRecipientCount || sendingMail || loadingRecipients" @click="sendReport">{{ sendingMail ? '正在生成附件并发送…' : '确认发送' }}</button></footer></section></div></Teleport>
   </div>
 </template>

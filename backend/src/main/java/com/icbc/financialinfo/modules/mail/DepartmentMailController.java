@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -49,7 +50,7 @@ public class DepartmentMailController {
             @PathVariable long id) {
         try {
             DepartmentMailService.SendResult result = mailService.send(managerId(servletRequest), id);
-            String message = result.failedCount() == 0 ? "邮件发送流程已记录到数据库" : "邮件发送流程完成，部分记录失败";
+            String message = result.failedCount() == 0 ? "邮件发送成功，报告已归档" : "邮件发送完成，部分收件人失败";
             return ResponseEntity.ok(new ApiResponse<>(200, message, result));
         } catch (DepartmentBusinessException exception) {
             return error(exception);
@@ -57,15 +58,23 @@ public class DepartmentMailController {
     }
 
     @GetMapping("/{id}")
-    public ApiResponse<DepartmentMailService.MailTaskDetail> detail(
+    public ResponseEntity<ApiResponse<DepartmentMailService.MailTaskDetail>> detail(
             HttpServletRequest request, @PathVariable long id) {
-        return new ApiResponse<>(200, "查询成功", mailService.detail(managerId(request), id));
+        try {
+            return ResponseEntity.ok(new ApiResponse<>(200, "查询成功", mailService.detail(managerId(request), id)));
+        } catch (DepartmentBusinessException exception) {
+            return error(exception);
+        }
     }
 
     @GetMapping("/{id}/logs")
-    public ApiResponse<List<DepartmentMailService.MailLogDetail>> logs(
+    public ResponseEntity<ApiResponse<List<DepartmentMailService.MailLogDetail>>> logs(
             HttpServletRequest request, @PathVariable long id) {
-        return new ApiResponse<>(200, "查询成功", mailService.logs(managerId(request), id));
+        try {
+            return ResponseEntity.ok(new ApiResponse<>(200, "查询成功", mailService.logs(managerId(request), id)));
+        } catch (DepartmentBusinessException exception) {
+            return error(exception);
+        }
     }
 
     private <T> ResponseEntity<ApiResponse<T>> error(DepartmentBusinessException exception) {
@@ -83,7 +92,8 @@ public class DepartmentMailController {
     }
 
     public record CreateMailRequest(@NotNull Long reportId,
-                                    @NotBlank String subject, String mailBody,
+                                    @NotBlank @Size(max = 300) String subject,
+                                    @Size(max = 10000) String mailBody,
                                     @NotEmpty List<@Valid RecipientRequest> recipients) {}
     public record RecipientRequest(@NotBlank String name, @NotBlank @Email String email) {}
 }
