@@ -52,6 +52,7 @@ app:
     retention-days: 30
     root: ${ARCHIVE_ROOT:./data/archives}
     report-font: ${REPORT_FONT_PATH:C:/Windows/Fonts/simfang.ttf}
+    report-title-font: ${REPORT_TITLE_FONT_PATH:C:/Windows/Fonts/simhei.ttf}
   mail:
     enabled: ${MAIL_ENABLED:false}
     from: ${MAIL_FROM:${MAIL_USERNAME:}}

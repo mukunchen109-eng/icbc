@@ -61,15 +61,19 @@ public class ReportArchiveService {
     private final ObjectMapper objectMapper;
     private final Path archiveRoot;
     private final Path reportFont;
+    private final Path reportTitleFont;
 
     public ReportArchiveService(JdbcTemplate jdbc,
                                 ObjectMapper objectMapper,
                                 @Value("${app.archive.root:./data/archives}") String archiveRoot,
-                                @Value("${app.archive.report-font:}") String reportFont) {
+                                @Value("${app.archive.report-font:}") String reportFont,
+                                @Value("${app.archive.report-title-font:}") String reportTitleFont) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
         this.archiveRoot = Path.of(archiveRoot).toAbsolutePath().normalize();
         this.reportFont = reportFont == null || reportFont.isBlank() ? null : Path.of(reportFont).toAbsolutePath();
+        this.reportTitleFont = reportTitleFont == null || reportTitleFont.isBlank()
+                ? null : Path.of(reportTitleFont).toAbsolutePath();
     }
 
     public PreparedArtifacts prepare(long reportId) {
@@ -178,7 +182,7 @@ public class ReportArchiveService {
             title.setAlignment(ParagraphAlignment.CENTER);
             title.setSpacingBefore(400);
             title.setSpacingAfter(280);
-            run(title, REPORT_NAME, 30, true, "Arial Unicode MS", "FF0000");
+            run(title, REPORT_NAME, 30, true, "SimHei", "FF0000");
 
             XWPFTable metadata = document.createTable(1, 3);
             metadata.setWidthType(TableWidthType.PCT);
@@ -202,26 +206,26 @@ public class ReportArchiveService {
                 itemTitle.setKeepNext(true);
                 itemTitle.setSpacingBefore(160);
                 itemTitle.setSpacingAfter(100);
-                run(itemTitle, articleHeading(article), 14, true, "Arial Unicode MS", "000000");
+                run(itemTitle, articleHeading(article), 14, true, "SimHei", "000000");
 
                 XWPFParagraph summary = document.createParagraph();
                 summary.setAlignment(ParagraphAlignment.BOTH);
                 summary.setIndentationFirstLine(480);
                 summary.setSpacingBetween(1.5);
                 summary.setSpacingAfter(120);
-                run(summary, normalizeBody(article.summary()), 12, false, "Arial Unicode MS", "000000");
+                run(summary, normalizeBody(article.summary()), 12, false, "FangSong", "000000");
             }
 
             XWPFParagraph separator = document.createParagraph();
             separator.setSpacingBefore(120);
             separator.setSpacingAfter(80);
             run(separator, "----------------------------------------------------------------------------------------------------",
-                    10, false, "Arial Unicode MS", "000000");
+                    10, false, "FangSong", "000000");
             XWPFParagraph notice = document.createParagraph();
             notice.setAlignment(ParagraphAlignment.BOTH);
             notice.setIndentationFirstLine(480);
             notice.setSpacingBetween(1.4);
-            run(notice, COPYRIGHT_NOTICE, 11, false, "Arial Unicode MS", "000000");
+            run(notice, COPYRIGHT_NOTICE, 11, false, "FangSong", "000000");
             document.write(stream);
         }
     }
@@ -231,8 +235,10 @@ public class ReportArchiveService {
             throw new IOException("未找到中文字体，请通过 REPORT_FONT_PATH 配置字体文件");
         }
         try (PDDocument document = new PDDocument()) {
-            PDFont font = PDType0Font.load(document, reportFont.toFile());
-            try (PdfTextWriter writer = new PdfTextWriter(document, font)) {
+            PDFont bodyFont = PDType0Font.load(document, reportFont.toFile());
+            PDFont titleFont = reportTitleFont != null && Files.isRegularFile(reportTitleFont)
+                    ? PDType0Font.load(document, reportTitleFont.toFile()) : bodyFont;
+            try (PdfTextWriter writer = new PdfTextWriter(document, bodyFont, titleFont)) {
                 writer.header(REPORT_NAME, DEPARTMENT_NAME, issueNumber(report), chineseDate(report.reportDate()));
                 for (ArticleData article : articles) {
                     writer.articleTitle(articleHeading(article));
@@ -351,7 +357,7 @@ public class ReportArchiveService {
         XWPFParagraph paragraph = cell.getParagraphs().get(0);
         paragraph.setAlignment(alignment);
         paragraph.setSpacingAfter(0);
-        run(paragraph, text, 12, false, "Arial Unicode MS", "000000");
+        run(paragraph, text, 12, false, "FangSong", "000000");
     }
 
     private CTPPr paragraphProperties(XWPFParagraph paragraph) {
@@ -432,12 +438,14 @@ public class ReportArchiveService {
         private static final float BODY_LINE_HEIGHT = 20.5f;
         private final PDDocument document;
         private final PDFont font;
+        private final PDFont titleFont;
         private PDPageContentStream content;
         private float y;
 
-        private PdfTextWriter(PDDocument document, PDFont font) throws IOException {
+        private PdfTextWriter(PDDocument document, PDFont font, PDFont titleFont) throws IOException {
             this.document = document;
             this.font = font;
+            this.titleFont = titleFont;
             newPage();
         }
 
@@ -507,7 +515,7 @@ public class ReportArchiveService {
 
         private void writeCenteredLine(String text, float size, boolean bold,
                                        int red, int green, int blue) throws IOException {
-            float width = textWidth(text, size);
+            float width = textWidth(text, size, bold);
             writeLine(text, Math.max(MARGIN, (PDRectangle.A4.getWidth() - width) / 2),
                     size, bold, red, green, blue, 0);
         }
@@ -520,7 +528,7 @@ public class ReportArchiveService {
                 int codePoint = normalized.codePointAt(offset);
                 String character = new String(Character.toChars(codePoint));
                 String candidate = line + character;
-                if (!line.isEmpty() && font.getStringWidth(candidate) / 1000 * size > maxWidth) {
+                if (!line.isEmpty() && titleFont.getStringWidth(candidate) / 1000 * size > maxWidth) {
                     lines.add(line.toString());
                     line.setLength(0);
                 }
@@ -570,24 +578,19 @@ public class ReportArchiveService {
             return font.getStringWidth(text) / 1000 * size;
         }
 
+        private float textWidth(String text, float size, boolean title) throws IOException {
+            return (title ? titleFont : font).getStringWidth(text) / 1000 * size;
+        }
+
         private void writeLine(String text, float x, float size, boolean bold,
                                int red, int green, int blue, float characterSpacing) throws IOException {
             content.beginText();
-            content.setFont(font, size);
+            content.setFont(bold ? titleFont : font, size);
             content.setNonStrokingColor(red, green, blue);
             content.setCharacterSpacing(characterSpacing);
             content.newLineAtOffset(x, y);
             content.showText(text);
             content.endText();
-            if (bold) {
-                content.beginText();
-                content.setFont(font, size);
-                content.setNonStrokingColor(red, green, blue);
-                content.setCharacterSpacing(characterSpacing);
-                content.newLineAtOffset(x + 0.35f, y);
-                content.showText(text);
-                content.endText();
-            }
             content.setCharacterSpacing(0);
             content.setNonStrokingColor(0, 0, 0);
         }
