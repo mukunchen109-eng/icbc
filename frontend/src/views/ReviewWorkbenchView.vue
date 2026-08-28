@@ -7,12 +7,20 @@ import http from '../api/http'
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
-const canEdit = computed(() => auth.user?.roleCode === 'INFO_MANAGER')
+const canEdit = computed(() => ['INFO_MANAGER', 'DEPT_MANAGER'].includes(auth.user?.roleCode))
 const isFinalReviewer = computed(() => auth.user?.roleCode === 'DEPT_MANAGER')
 const statusLabels = {
   GENERATED: '已生成', INITIAL_PENDING: '待初审', INITIAL_REVIEWING: '初审中',
   INITIAL_REJECTED: '初审已退回', FINAL_PENDING: '待终审',
   FINAL_REVIEWING: '终审中', FINAL_APPROVED: '终审已通过', FINAL_ARCHIVED: '已归档'
+}
+const categoryLabels = {
+  FINANCE: '金融领域',
+  MACRO: '宏观经济',
+  BEIJING_POLICY: '首都政策'
+}
+function categoryLabel(category) {
+  return categoryLabels[category] || category || '未分类'
 }
 const statusText = computed(() => statusLabels[reportDetail.value?.status] || reportDetail.value?.status || '待确认')
 const selectedTextPreview = computed(() => {
@@ -39,7 +47,6 @@ const localSensitiveMatches = ref([])
 const localDataMatches = ref([])
 const reviewComment = ref('')
 const submitting = ref(false)
-const checking = ref(false)
 const draft = ref('')
 const annotationText = ref('')
 const selectedText = ref('')
@@ -54,6 +61,17 @@ const saveNotice = ref('')
 const leaveDialogVisible = ref(false)
 const lastDraftPayload = ref(null)
 const selectedArticleSequence = ref(null)
+const replacementMode = ref(false)
+const replacementDialogVisible = ref(false)
+const replacementLoading = ref(false)
+const replacementSubmitting = ref(false)
+const replacementError = ref('')
+const replacementTarget = ref(null)
+const replacementCandidates = ref([])
+const selectedReplacementArticleId = ref(null)
+const selectedReplacement = computed(() => replacementCandidates.value.find(
+  item => item.articleId === selectedReplacementArticleId.value
+) || null)
 let hoverTimer
 let savedSelectionRange = null
 
@@ -61,7 +79,7 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 }
 function renderDraft() {
-  draft.value = articles.value.map(item => `<section class="entry" data-sequence="${item.sequenceNo}"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.summaryContent)}</p></section>`).join('')
+  draft.value = articles.value.map(item => `<section class="entry${replacementMode.value ? ' replacement-mode-entry' : ''}" data-sequence="${item.sequenceNo}">${replacementMode.value ? '<button type="button" class="entry-replace-button" data-replace-entry="true" contenteditable="false">替换</button>' : ''}<div class="entry-title-row"><h3>${escapeHtml(item.title)}</h3><span class="article-category" contenteditable="false">${escapeHtml(categoryLabel(item.category))}</span></div><p>${escapeHtml(item.summaryContent)}</p></section>`).join('')
 }
 async function loadWorkspace() {
   loading.value = true
@@ -94,36 +112,33 @@ async function loadWorkspace() {
     applyReviewRecords()
   }
 }
+
 function getArticleSource(articleId) {
-  return sources.value.find(
-    source => Number(source.articleId) === Number(articleId)
-  ) || null
+  return sources.value.find(source => Number(source.articleId) === Number(articleId)) || null
 }
 function focusSourceForDraftEntry(event) {
   const section = event.target.closest?.('.entry')
   if (!section || !sourcePanel.value) return
-
-  const article = articles.value.find(
-    item => item.sequenceNo === Number(section.dataset.sequence)
-  )
+  const article = articles.value.find(item => item.sequenceNo === Number(section.dataset.sequence))
   const source = getArticleSource(article?.id)
   if (!source) return
-
-  const target = sourcePanel.value.querySelector(
-    `[data-daily-seq="${source.dailySeq}"]`
-  )
+  const target = sourcePanel.value.querySelector(`[data-daily-seq="${source.dailySeq}"]`)
   if (!target) return
-
-  sourcePanel.value.scrollTo({
-    top: target.offsetTop - sourcePanel.value.offsetTop,
-    behavior: 'smooth'
-  })
-
+  sourcePanel.value.scrollTo({ top: target.offsetTop - sourcePanel.value.offsetTop, behavior: 'smooth' })
   target.classList.add('source-focused')
-  window.setTimeout(
-    () => target.classList.remove('source-focused'),
-    900
-  )
+  window.setTimeout(() => target.classList.remove('source-focused'), 900)
+}
+function handleDraftClick(event) {
+  const replaceButton = event.target.closest?.('[data-replace-entry="true"]')
+  if (replaceButton) {
+    event.preventDefault()
+    event.stopPropagation()
+    const section = replaceButton.closest('.entry')
+    const article = articles.value.find(item => item.sequenceNo === Number(section?.dataset.sequence))
+    if (article) openReplacementDialog(article)
+    return
+  }
+  focusSourceForDraftEntry(event)
 }
 let sensitiveHighlightFrame = 0
 function refreshSensitiveHighlights() {
@@ -156,13 +171,9 @@ function scheduleSensitiveHighlights() {
   sensitiveHighlightFrame = requestAnimationFrame(refreshSensitiveHighlights)
 }
 const numberPattern = /\d[\d,，]*(?:\.\d+)?(?:[%％])?/g
-
 function normalizeNumber(value) {
-  return String(value || '')
-    .replace(/[，,]/g, '')
-    .replaceAll('％', '%')
+  return String(value || '').replace(/[，,]/g, '').replaceAll('％', '%')
 }
-
 function createTextRange(element, start, end) {
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
   let node
@@ -171,26 +182,20 @@ function createTextRange(element, start, end) {
   let endNode
   let startOffset
   let endOffset
-
   while ((node = walker.nextNode())) {
     const nodeEnd = offset + node.nodeValue.length
-
     if (!startNode && start >= offset && start < nodeEnd) {
       startNode = node
       startOffset = start - offset
     }
-
     if (startNode && end > offset && end <= nodeEnd) {
       endNode = node
       endOffset = end - offset
       break
     }
-
     offset = nodeEnd
   }
-
   if (!startNode || !endNode) return null
-
   const range = document.createRange()
   range.setStart(startNode, startOffset)
   range.setEnd(endNode, endOffset)
@@ -198,38 +203,27 @@ function createTextRange(element, start, end) {
 }
 function refreshDataHighlights() {
   if (!draftEditor.value) return
-
   const ranges = []
   const matches = []
-
   for (const section of draftEditor.value.querySelectorAll('.entry')) {
     const sequenceNo = Number(section.dataset.sequence)
     const article = articles.value.find(item => item.sequenceNo === sequenceNo)
     const source = getArticleSource(article?.id)
     const paragraph = section.querySelector('p')
     if (!article || !source || !paragraph) continue
-
     const summary = paragraph.textContent || ''
-    const sourceText = normalizeNumber(
-      source.originalContent || source.content
-    )
-
-    const sourceNumbers=new Set(
-      Array.from(
-        sourceText.matchAll(numberPattern),
-        match=>normalizeNumber(match[0])
-      )
-    )
-
+    const sourceText = normalizeNumber(source.originalContent || source.content)
+    const sourceNumbers = new Set(Array.from(
+      sourceText.matchAll(numberPattern),
+      match => normalizeNumber(match[0])
+    ))
     for (const match of summary.matchAll(numberPattern)) {
-      const currentNumber=normalizeNumber(match[0])
+      const currentNumber = normalizeNumber(match[0])
       if (sourceNumbers.has(currentNumber)) continue
-
       const startOffset = match.index
       const endOffset = startOffset + match[0].length
       const range = createTextRange(paragraph, startOffset, endOffset)
       if (!range) continue
-
       ranges.push(range)
       matches.push({
         sequenceNo,
@@ -241,43 +235,30 @@ function refreshDataHighlights() {
       })
     }
   }
-
   localDataMatches.value = matches
-
   if (window.CSS?.highlights && typeof window.Highlight !== 'undefined') {
     CSS.highlights.set('data-inconsistency', new Highlight(...ranges))
   }
 }
 function findDataMatchAtPoint(event) {
-  const caret = document.caretRangeFromPoint?.(
-    event.clientX,
-    event.clientY
-  )
+  const caret = document.caretRangeFromPoint?.(event.clientX, event.clientY)
   if (!caret) return null
-
   const element = caret.startContainer.nodeType === Node.TEXT_NODE
-    ? caret.startContainer.parentElement
-    : caret.startContainer
+    ? caret.startContainer.parentElement : caret.startContainer
   const paragraph = element?.closest?.('.entry p')
   const section = paragraph?.closest('.entry')
   if (!paragraph || !section) return null
-
   const before = document.createRange()
   before.selectNodeContents(paragraph)
-
   try {
     before.setEnd(caret.startContainer, caret.startOffset)
   } catch {
     return null
   }
-
   const offset = before.toString().length
   const sequenceNo = Number(section.dataset.sequence)
-
   return localDataMatches.value.find(item =>
-    item.sequenceNo === sequenceNo &&
-    offset >= item.startOffset &&
-    offset < item.endOffset
+    item.sequenceNo === sequenceNo && offset >= item.startOffset && offset < item.endOffset
   )
 }
 function persistDraft() {
@@ -397,40 +378,25 @@ async function addAnnotation() {
 }
 function showAnnotationBubble(event) {
   const target = event.target.closest?.('.annotation-mark')
-
   if (target) {
     clearTimeout(hoverTimer)
-    const annotation = annotations.value.find(
-      item => String(item.id) === target.dataset.annotationId
-    )
+    const annotation = annotations.value.find(item => String(item.id) === target.dataset.annotationId)
     if (!annotation) return
-
     const rect = target.getBoundingClientRect()
     hoverBubble.value = {
-      kind: 'annotation',
-      title: '批注信息',
+      kind: 'annotation', title: '批注信息',
       text: `${annotation.operatorUsername}：${annotation.note}`,
-      left: Math.min(rect.left, window.innerWidth - 310),
-      top: rect.bottom + 8,
-      width: 290
+      left: Math.min(rect.left, window.innerWidth - 310), top: rect.bottom + 8, width: 290
     }
     return
   }
-
   const issue = findDataMatchAtPoint(event)
-  if (!issue) {
-    hideAnnotationBubble()
-    return
-  }
-
+  if (!issue) { hideAnnotationBubble(); return }
   clearTimeout(hoverTimer)
   hoverBubble.value = {
-    kind: 'data',
-    title: '数据不一致',
-    text: issue.message,
+    kind: 'data', title: '数据不一致', text: issue.message,
     left: Math.min(event.clientX + 10, window.innerWidth - 310),
-    top: event.clientY + 18,
-    width: 290
+    top: event.clientY + 18, width: 290
   }
 }
 function hideAnnotationBubble() { clearTimeout(hoverTimer); hoverTimer = setTimeout(() => { hoverBubble.value = null }, 40) }
@@ -478,59 +444,86 @@ async function saveDraft() {
     return false
   } finally { saving.value = false }
 }
-async function runCheck() {
-  if (dirty.value) {
-    saveNotice.value = '请先保存草稿，再重新执行敏感词和数据一致性检测'
-    return
-  }
-  checking.value = true
-  try {
-    await http.post(`/reports/${selectedReport.value.reportId}/check`)
-    const { data } = await http.get(`/reports/${selectedReport.value.reportId}/issues`)
-    issues.value = data?.data || []
-    saveNotice.value = `检测完成，发现 ${issues.value.length} 项问题`
-  } catch (requestError) {
-    saveNotice.value = requestError.response?.data?.message || '检测失败'
-  } finally { checking.value = false }
-}
 async function resolveIssueItem(issue) {
   if (pendingOperations.value.some(item => item.type === 'RESOLVE_ISSUE' && item.issueId === issue.id)) return
   issue.resolved = 1
   stageOperation({ type: 'RESOLVE_ISSUE', issueId: issue.id })
   saveNotice.value = '问题处理状态已暂存，保存草稿后写入数据库'
 }
-async function replaceSelectedArticle() {
-  const current = articles.value.find(item => item.sequenceNo === selectedArticleSequence.value)
-  if (!current) { saveNotice.value = '请先在需要替换的报告条目中选择文字'; return }
+function toggleReplacementMode() {
+  replacementMode.value = !replacementMode.value
+  if (!replacementMode.value) closeReplacementDialog()
+  for (const section of draftEditor.value?.querySelectorAll('.entry') || []) {
+    section.classList.toggle('replacement-mode-entry', replacementMode.value)
+    const existing = section.querySelector('[data-replace-entry="true"]')
+    if (replacementMode.value && !existing) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'entry-replace-button'
+      button.dataset.replaceEntry = 'true'
+      button.contentEditable = 'false'
+      button.textContent = '替换'
+      section.prepend(button)
+    } else if (!replacementMode.value) {
+      existing?.remove()
+    }
+  }
+}
+async function openReplacementDialog(article) {
+  if (dirty.value) {
+    saveNotice.value = '当前草稿有未保存修改，请先保存草稿再替换资讯'
+    return
+  }
+  replacementTarget.value = article
+  replacementCandidates.value = []
+  selectedReplacementArticleId.value = null
+  replacementError.value = ''
+  replacementDialogVisible.value = true
+  replacementLoading.value = true
   try {
     const { data } = await http.get(`/review-tasks/${selectedReport.value.taskId}/replacement-articles`, {
-      params: { category: current.category || '' }
+      params: {}
     })
-    const candidates = data?.data || []
-    if (!candidates.length) { saveNotice.value = '没有可替换的资讯'; return }
-    const message = candidates.slice(0, 10).map(item => `${item.newsId}：${item.title}`).join('\n')
-    const selectedId = window.prompt(`输入替换资讯ID：\n${message}`)
-    if (!selectedId) return
-    const reason = window.prompt('填写替换原因')
-    if (!reason?.trim()) return
-    const candidate = candidates.find(item => item.newsId === Number(selectedId))
-    if (!candidate) { saveNotice.value = '输入的替换资讯ID不在候选列表中'; return }
-    const section = draftEditor.value?.querySelector(`.entry[data-sequence="${current.sequenceNo}"]`)
-    if (!section) { saveNotice.value = '未找到需要替换的报告条目'; return }
-    section.querySelector('h3').innerText = candidate.title
-    section.querySelector('p').innerText = candidate.summaryContent || ''
-    pendingOperations.value = pendingOperations.value.filter(item =>
-      item.articleId !== current.id || !['REPLACE', 'MARK_MODIFY', 'COMMENT'].includes(item.type))
-    annotations.value = annotations.value.filter(item =>
-      !String(item.id).startsWith('temp-') || item.articleId !== current.id)
-    stageOperation({
-      type: 'REPLACE', articleId: current.id, newNewsId: candidate.newsId,
-      reason: reason.trim(), previewTitle: candidate.title,
-      previewSummary: candidate.summaryContent || ''
+    replacementCandidates.value = data?.data || []
+  } catch (requestError) {
+    replacementError.value = requestError.response?.data?.message || '备选资讯加载失败'
+  } finally {
+    replacementLoading.value = false
+  }
+}
+function closeReplacementDialog() {
+  if (replacementSubmitting.value) return
+  replacementDialogVisible.value = false
+  replacementTarget.value = null
+  replacementCandidates.value = []
+  selectedReplacementArticleId.value = null
+  replacementError.value = ''
+}
+function toggleReplacementCandidate(articleId) {
+  selectedReplacementArticleId.value = selectedReplacementArticleId.value === articleId ? null : articleId
+}
+async function confirmReplacement() {
+  const current = replacementTarget.value
+  const candidate = selectedReplacement.value
+  if (!current || !candidate || replacementSubmitting.value) return
+  replacementSubmitting.value = true
+  replacementError.value = ''
+  try {
+    await http.post(`/review-tasks/${selectedReport.value.taskId}/articles/${current.id}/replace`, {
+      newNewsId: candidate.newsId,
+      reason: candidate.reason?.trim() || '替换为备选条目'
     })
-    persistDraft()
-    saveNotice.value = '替换结果已暂存，保存草稿后写入数据库'
-  } catch (requestError) { saveNotice.value = requestError.response?.data?.message || '替换资讯失败' }
+    replacementDialogVisible.value = false
+    replacementTarget.value = null
+    replacementCandidates.value = []
+    selectedReplacementArticleId.value = null
+    await loadWorkspace()
+    saveNotice.value = '资讯条目替换成功'
+  } catch (requestError) {
+    replacementError.value = requestError.response?.data?.message || '替换资讯失败'
+  } finally {
+    replacementSubmitting.value = false
+  }
 }
 async function submitDecision(decision) {
   if (dirty.value && canEdit.value) {
@@ -571,22 +564,23 @@ onUnmounted(() => {
 <template>
   <div class="review-shell">
     <header class="review-header"><div><strong>金融智讯</strong><span>人机协同审核工作台</span></div><div class="review-user"><span class="role-badge">{{ auth.user?.roleName }}</span><span>{{ auth.user?.username }}</span><button class="text-button" @click="logout">退出</button></div></header>
-    <section class="review-context"><div><span class="eyebrow">待审核报告 · 报告 #{{ selectedReport.reportId }}</span><h1>{{ selectedReport.title }}</h1><p>报告日期：{{ selectedReport.date }}　·　状态：{{ statusText }}　·　当前环节：{{ isFinalReviewer ? '终审只读复核' : '初审编辑' }}　·　完整留痕</p></div><div class="context-actions"><span v-if="saveNotice" class="draft-save-notice">{{ saveNotice }}</span><button v-if="canEdit" class="outline-button" :disabled="saving || loading" @click="saveDraft">{{ saving ? '保存中…' : '保存草稿' }}</button><button v-if="!isFinalReviewer" :disabled="submitting || loading" @click="submitInitialReview">{{ submitting ? '提交中…' : '提交终审' }}</button><template v-else><button class="outline-button" :disabled="submitting || loading" @click="returnForRevision">退回</button><button :disabled="submitting || loading" @click="confirmFinalReview">{{ submitting ? '提交中…' : '确认终审' }}</button></template><button class="outline-button" @click="requestBackToTasks">返回列表</button></div></section>
+    <section class="review-context"><div><span class="eyebrow">待审核报告 · 报告 #{{ selectedReport.reportId }}</span><h1>{{ selectedReport.title }}</h1><p>报告日期：{{ selectedReport.date }}　·　状态：{{ statusText }}　·　当前环节：{{ isFinalReviewer ? '终审编辑' : '初审编辑' }}　·　完整留痕</p></div><div class="context-actions"><span v-if="saveNotice" class="draft-save-notice">{{ saveNotice }}</span><button v-if="canEdit" class="outline-button" :disabled="saving || loading" @click="saveDraft">{{ saving ? '保存中…' : '保存草稿' }}</button><button v-if="!isFinalReviewer" :disabled="submitting || loading" @click="submitInitialReview">{{ submitting ? '提交中…' : '提交终审' }}</button><button v-else :disabled="submitting || loading" @click="confirmFinalReview">{{ submitting ? '提交中…' : '确认终审' }}</button><button class="outline-button" @click="requestBackToTasks">返回列表</button></div></section>
     <div class="review-legend"><span class="legend-sensitive">敏感词</span><span class="legend-data">数据不一致</span><span class="legend-change">修改/批注</span></div>
     <div v-if="loadError" class="task-error"><b>审核数据加载失败</b><span>{{ loadError }}</span><button @click="loadWorkspace">重新加载</button></div>
     <div v-else-if="loading" class="task-empty"><span class="task-spinner"></span><b>正在加载报告与原始资讯…</b></div>
     <main v-else class="review-workspace">
       <article class="document-panel draft-panel"><div class="document-title"><div><h2>报告草稿</h2></div><span class="status-dot">{{ isFinalReviewer ? '终审中' : '初审中' }}</span></div>
-        <div v-if="canEdit" class="review-toolbar"><button class="tool-button" @mousedown.prevent @click="markModify">标记修改</button><button class="tool-button" @mousedown.prevent @click="openAnnotation">添加批注</button><button class="tool-button" @click="replaceSelectedArticle">替换资讯</button><button class="tool-button" :disabled="checking" @click="runCheck">{{ checking ? '检测中…' : '重新检测' }}</button></div>
-        <div ref="draftEditor" class="draft-editor" :contenteditable="canEdit" @keydown="preventDraftLineBreak" @beforeinput="preventDraftLineBreak" @input="handleDraftInput" @mouseup="captureSelection" @click="focusSourceForDraftEntry" @mousemove="showAnnotationBubble" @mouseleave="hideAnnotationBubble" v-html="draft"></div>
+        <div v-if="canEdit" class="review-toolbar"><button class="tool-button" @mousedown.prevent @click="markModify">标记修改</button><button class="tool-button" @mousedown.prevent @click="openAnnotation">添加批注</button><button class="tool-button" :class="{ 'replacement-active': replacementMode }" @click="toggleReplacementMode">{{ replacementMode ? '取消替换' : '替换资讯' }}</button></div>
+        <div ref="draftEditor" class="draft-editor" :contenteditable="canEdit" @keydown="preventDraftLineBreak" @beforeinput="preventDraftLineBreak" @input="handleDraftInput" @mouseup="captureSelection" @click="handleDraftClick" @mousemove="showAnnotationBubble" @mouseleave="hideAnnotationBubble" v-html="draft"></div>
         <div v-if="showAnnotation" class="annotation-composer"><span :title="selectedText">添加批注：{{ selectedTextPreview }}</span><input v-model="annotationText" placeholder="输入批注内容"><button @click="addAnnotation">添加</button></div>
         <div class="issue-summary"><div><b>敏感内容</b><span v-for="item in localSensitiveMatches" :key="`${item.word}-${item.occurrence}`" class="sensitive-chip" title="草稿中检测到的敏感词">{{ item.word }}</span><span v-if="!localSensitiveMatches.length">未发现敏感词</span></div><div><b>数据核验</b><button v-for="item in issues.filter(issue => issue.issueType !== 'SENSITIVE_CONTENT' && !issue.resolved)" :key="item.id" class="data-chip" :disabled="!canEdit" :title="canEdit ? `${item.message}；点击标记处理` : item.message" @click="resolveIssueItem(item)">{{ item.issueType }}：{{ item.matchedText }}</button></div></div>
       </article>
       <article class="document-panel source-panel"><div class="document-title"><div><h2>原始资讯全文</h2></div><span class="source-count">{{ sources.length }} 条资讯</span></div>
-        <div ref="sourcePanel" class="source-content"><section v-for="source in sources" :key="source.newsId" :data-daily-seq="source.dailySeq"><div class="source-meta"><b>{{ String(source.dailySeq).padStart(2, '0') }}</b><span>{{ source.industry || '资讯' }} · {{ source.newsDate }}</span></div><h3>{{ source.title }}</h3><p>{{ source.originalContent || source.content }}</p></section><section v-if="!sources.length"><p>报告日期当天暂无原始资讯。</p></section></div>
+        <div ref="sourcePanel" class="source-content"><section v-for="source in sources" :key="source.articleId" :data-daily-seq="source.dailySeq"><h3>{{ source.title }}</h3><p>{{ source.originalContent || source.content }}</p></section><section v-if="!sources.length"><p>当前报告暂无已选原始资讯。</p></section></div>
       </article>
     </main>
     <div v-if="hoverBubble" class="annotation-bubble" :style="{ left: `${hoverBubble.left}px`, top: `${hoverBubble.top}px`, width: `${hoverBubble.width}px` }"><b>{{ hoverBubble.title }}</b><p>{{ hoverBubble.text }}</p></div>
+    <Teleport to="body"><div v-if="replacementDialogVisible" class="replacement-mask" @click.self="closeReplacementDialog"><section class="replacement-dialog" role="dialog" aria-modal="true" aria-labelledby="replacement-dialog-title"><header><div><h2 id="replacement-dialog-title">选择备选资讯</h2><p>当前条目：{{ replacementTarget?.title }}</p></div><button class="replacement-close" aria-label="关闭" :disabled="replacementSubmitting" @click="closeReplacementDialog">×</button></header><div v-if="replacementLoading" class="replacement-state"><span class="task-spinner"></span>正在加载备选资讯…</div><div v-else-if="replacementError && !replacementCandidates.length" class="replacement-state replacement-error">{{ replacementError }}</div><div v-else-if="!replacementCandidates.length" class="replacement-state">当前报告没有可替换的备选资讯</div><div v-else class="replacement-list"><article v-for="candidate in replacementCandidates" :key="candidate.articleId" :class="['replacement-item', { selected: selectedReplacementArticleId === candidate.articleId }]" @click="toggleReplacementCandidate(candidate.articleId)"><button type="button" class="replacement-selector" :aria-pressed="selectedReplacementArticleId === candidate.articleId" :aria-label="`选择 ${candidate.title}`" @click.stop="toggleReplacementCandidate(candidate.articleId)"><span></span></button><div><div class="replacement-title-row"><h3>{{ candidate.title }}</h3><span class="article-category">{{ categoryLabel(candidate.category) }}</span></div><p class="replacement-reason">理由：{{ candidate.reason || '暂无推荐理由' }}</p><p v-if="selectedReplacementArticleId === candidate.articleId" class="replacement-content">{{ candidate.summaryContent || '暂无条目内容' }}</p></div></article></div><p v-if="replacementError && replacementCandidates.length" class="replacement-inline-error">{{ replacementError }}</p><footer><button class="outline-button" :disabled="replacementSubmitting" @click="closeReplacementDialog">取消</button><button :disabled="!selectedReplacement || replacementSubmitting" @click="confirmReplacement">{{ replacementSubmitting ? '替换中…' : '确定替换' }}</button></footer></section></div></Teleport>
     <footer class="review-footer"><label>{{ isFinalReviewer ? '部门负责人审查意见' : '部门负责人审查意见（只读）' }}<input v-if="isFinalReviewer" v-model="reviewComment" placeholder="填写终审意见或退回原因（选填）"><input v-else :value="reportDetail?.departmentReviewComment || '暂无部门负责人审查意见'" readonly></label><button v-if="isFinalReviewer" class="danger-button" :disabled="submitting" @click="returnForRevision">退回修改</button></footer>
     <Teleport to="body"><div v-if="leaveDialogVisible" class="review-leave-mask" @click.self="leaveDialogVisible = false"><section class="review-leave-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-dialog-title"><h3 id="leave-dialog-title">尚未保存草稿</h3><p>当前报告有未保存的修改，返回列表前是否保存草稿？</p><div class="review-leave-actions"><button class="outline-button" @click="leaveDialogVisible = false">取消</button><button class="outline-button" @click="discardAndBack">不保存返回</button><button :disabled="saving" @click="saveAndBack">{{ saving ? '保存中…' : '保存并返回' }}</button></div></section></div></Teleport>
   </div>

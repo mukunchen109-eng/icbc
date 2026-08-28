@@ -250,14 +250,14 @@ public class ReviewController {
 
     @PostMapping("/reports/{reportId}/check")
     public ApiResponse<CheckResult> check(@PathVariable long reportId, HttpServletRequest servletRequest) {
-        requireInformationManager(servletRequest);
+        requireReviewer(servletRequest);
         return new ApiResponse<>(200, "审核检测完成", issueService.check(reportId));
     }
 
     @PutMapping("/review-issues/{id}/resolve")
     public ApiResponse<Void> resolveIssue(
             @PathVariable long id, HttpServletRequest servletRequest) {
-        requireInformationManager(servletRequest);
+        requireReviewer(servletRequest);
         issueService.resolve(id, operatorId(servletRequest));
         return new ApiResponse<>(200, "审核问题已标记为已处理", null);
     }
@@ -288,10 +288,9 @@ public class ReviewController {
 
     public record ReviewDecisionRequest(String reviewComment) {}
 
-    private void requireInformationManager(HttpServletRequest request) {
-        if (!"INFO_MANAGER".equals(role(request))) {
-            throw new ReviewOperationException(HttpStatus.FORBIDDEN,
-                    "部门负责人只能查看初审留痕并提交终审意见");
+    private void requireReviewer(HttpServletRequest request) {
+        if (!List.of("INFO_MANAGER", "DEPT_MANAGER").contains(role(request))) {
+            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "当前用户无权执行审核操作");
         }
     }
 }

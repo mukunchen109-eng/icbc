@@ -20,8 +20,8 @@ public class ReviewDraftService {
 
     @Transactional
     public SaveDraftResult save(long reportId, long userId, String role, SaveDraftRequest request) {
-        if (!"INFO_MANAGER".equals(role)) {
-            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "部门负责人不能修改审核草稿");
+        if (!List.of("INFO_MANAGER", "DEPT_MANAGER").contains(role)) {
+            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "当前用户无权修改审核草稿");
         }
         List<DraftOperation> operations = request == null || request.operations() == null
                 ? List.of() : request.operations();
@@ -44,12 +44,12 @@ public class ReviewDraftService {
                         reportId, userId, role,
                         new AddMarkRequest(required(operation.articleId(), "报告条目不能为空"),
                                 "MODIFY", operation.selectedText()))
-                        .recordId() == null ? reportStatus : "INITIAL_REVIEWING";
+                        .recordId() == null ? reportStatus : reviewingStatus(role);
                 case "COMMENT" -> reportStatus = commandService.addComment(
                         reportId, userId, role,
                         new AddCommentRequest(required(operation.articleId(), "报告条目不能为空"),
                                 operation.selectedText(), operation.commentText()))
-                        .recordId() == null ? reportStatus : "INITIAL_REVIEWING";
+                        .recordId() == null ? reportStatus : reviewingStatus(role);
                 case "REPLACE" -> reportStatus = commandService.replaceArticle(
                         reportId, required(operation.articleId(), "报告条目不能为空"), userId, role,
                         new ReplaceArticleRequest(required(operation.newNewsId(), "替换资讯不能为空"), operation.reason()))
@@ -65,5 +65,9 @@ public class ReviewDraftService {
     private long required(Long value, String message) {
         if (value == null) throw new ReviewOperationException(HttpStatus.BAD_REQUEST, message);
         return value;
+    }
+
+    private String reviewingStatus(String role) {
+        return "DEPT_MANAGER".equals(role) ? "FINAL_REVIEWING" : "INITIAL_REVIEWING";
     }
 }

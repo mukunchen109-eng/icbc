@@ -1,5 +1,7 @@
 package com.icbc.financialinfo.modules.archive;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.icbc.financialinfo.modules.review.DepartmentBusinessException;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -35,13 +37,16 @@ import java.util.zip.ZipOutputStream;
 public class ReportArchiveService {
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private final JdbcTemplate jdbc;
+    private final ObjectMapper objectMapper;
     private final Path archiveRoot;
     private final Path reportFont;
 
     public ReportArchiveService(JdbcTemplate jdbc,
+                                ObjectMapper objectMapper,
                                 @Value("${app.archive.root:./data/archives}") String archiveRoot,
                                 @Value("${app.archive.report-font:}") String reportFont) {
         this.jdbc = jdbc;
+        this.objectMapper = objectMapper;
         this.archiveRoot = Path.of(archiveRoot).toAbsolutePath().normalize();
         this.reportFont = reportFont == null || reportFont.isBlank() ? null : Path.of(reportFont).toAbsolutePath();
     }
@@ -106,11 +111,42 @@ public class ReportArchiveService {
 
     private List<ArticleData> articles(long reportId) {
         return jdbc.query("""
-                SELECT id,category,title,summary_content
-                  FROM report_article WHERE report_id=? ORDER BY id
-                """, (rs, row) -> new ArticleData(
-                rs.getLong("id"), row + 1, rs.getString("category"),
-                rs.getString("title"), rs.getString("summary_content")), reportId);
+                SELECT a.id,a.category,a.title,a.summary_content,modified.after_content
+                  FROM report_article a
+                  LEFT JOIN review_record modified
+                    ON modified.id=(
+                        SELECT MAX(rr.id)
+                          FROM review_record rr
+                         WHERE rr.report_id=a.report_id
+                           AND rr.article_id=a.id
+                           AND rr.action_type='MODIFY'
+                    )
+                 WHERE a.report_id=? AND a.select_type='selected' ORDER BY a.id
+                """, (rs, row) -> {
+            ModifiedArticle modified = modifiedArticle(
+                    rs.getString("after_content"),
+                    rs.getString("title"),
+                    rs.getString("summary_content"));
+            return new ArticleData(rs.getLong("id"), row + 1, rs.getString("category"),
+                    modified.title(), modified.summary());
+        }, reportId);
+    }
+
+    private ModifiedArticle modifiedArticle(String afterContent, String articleTitle, String articleSummary) {
+        if (afterContent == null || afterContent.isBlank()) {
+            return new ModifiedArticle(articleTitle, articleSummary);
+        }
+        try {
+            JsonNode snapshot = objectMapper.readTree(afterContent);
+            JsonNode title = snapshot.get("title");
+            JsonNode summary = snapshot.get("summaryContent");
+            return new ModifiedArticle(
+                    title == null || title.isNull() ? articleTitle : title.asText(),
+                    summary == null || summary.isNull() ? articleSummary : summary.asText());
+        } catch (IOException ignored) {
+            // 兼容早期直接将修改后正文写入 after_content 的记录。
+            return new ModifiedArticle(articleTitle, afterContent);
+        }
     }
 
     private void writeDocx(ReportData report, List<ArticleData> articles, Path output) throws IOException {
@@ -167,8 +203,10 @@ public class ReportArchiveService {
         List<String[]> rows = jdbc.query("""
                 SELECT a.news_id,n.daily_seq,n.source_row_id,DATE_FORMAT(n.news_date,'%Y-%m-%d'),
                        COALESCE(n.title,a.title),n.original_content,n.content,n.industry,n.area,n.content_hash
-                  FROM report_article a LEFT JOIN news_pool n ON n.id=a.news_id
-                 WHERE a.report_id=? ORDER BY a.id
+                  FROM report_article a
+                  JOIN report r ON r.id=a.report_id
+                  LEFT JOIN news_pool n ON n.daily_seq=a.news_id AND n.news_date=r.report_date
+                 WHERE a.report_id=? AND a.select_type='selected' ORDER BY a.id
                 """, (rs, row) -> new String[]{
                 rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5),
                 rs.getString(6), rs.getString(7), rs.getString(8), rs.getString(9), rs.getString(10)}, reportId);
@@ -287,6 +325,7 @@ public class ReportArchiveService {
     public record AttachmentInfo(String name, long size, String type) {}
     public record ArchiveResult(String packagePath, String fileHash) {}
     public record ReportData(long id, String reportDate, String reportTitle, String status) {}
+    private record ModifiedArticle(String title, String summary) {}
     private record ArticleData(long id, int sequence, String category, String title, String summary) {}
 
     private static final class PdfTextWriter implements AutoCloseable {
