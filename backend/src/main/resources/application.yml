@@ -6,7 +6,7 @@ spring:
   datasource:
     url: ${ICBC_DB_URL:jdbc:mysql://icbc-db123.mysql.polardb.rds.aliyuncs.com:3306/db1?useSSL=true&useUnicode=true&serverTimezone=Asia%2FShanghai&characterEncoding=UTF-8}
     username: ${ICBC_DB_USERNAME:icbc_db123}
-    password: "icbc123!"
+    password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
@@ -26,8 +26,8 @@ spring:
   mail:
     host: ${MAIL_HOST:smtp.qq.com}
     port: ${MAIL_PORT:465}
-    username: ${MAIL_USERNAME:1308719096@qq.com}
-    password: ${MAIL_PASSWORD:vbvdulxqdpifbada}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
     default-encoding: UTF-8
     properties:
       mail.smtp.auth: true
@@ -51,7 +51,7 @@ app:
   archive:
     retention-days: 30
     root: ${ARCHIVE_ROOT:./data/archives}
-    report-font: ${REPORT_FONT_PATH:/System/Library/Fonts/Supplemental/Arial Unicode.ttf}
+    report-font: ${REPORT_FONT_PATH:C:/Windows/Fonts/simfang.ttf}
   mail:
     enabled: ${MAIL_ENABLED:false}
     from: ${MAIL_FROM:${MAIL_USERNAME:}}

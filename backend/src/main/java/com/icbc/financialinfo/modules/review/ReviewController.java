@@ -12,6 +12,8 @@ import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplaceArticleR
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.ReplacementArticle;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewRequest;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.SubmitReviewResult;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.SaveDraftRequest;
+import com.icbc.financialinfo.modules.review.ReviewCommandModels.SaveDraftResult;
 import com.icbc.financialinfo.modules.review.ReviewIssueModels.CheckResult;
 import com.icbc.financialinfo.modules.review.ReviewIssueModels.ReviewIssue;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ArticleSource;
@@ -41,13 +43,15 @@ public class ReviewController {
     private final ReviewQueryRepository reviewRepository;
     private final ReviewCommandService commandService;
     private final ReviewIssueService issueService;
+    private final ReviewDraftService draftService;
 
     public ReviewController(
             ReviewQueryRepository reviewRepository, ReviewCommandService commandService,
-            ReviewIssueService issueService) {
+            ReviewIssueService issueService, ReviewDraftService draftService) {
         this.reviewRepository = reviewRepository;
         this.commandService = commandService;
         this.issueService = issueService;
+        this.draftService = draftService;
     }
 
     @GetMapping("/reviews/pending")
@@ -160,6 +164,14 @@ public class ReviewController {
                 commandService.addMark(reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest), request));
     }
 
+    @PostMapping("/review-tasks/{taskId}/draft")
+    public ApiResponse<SaveDraftResult> saveDraft(
+            @PathVariable long taskId, @RequestBody SaveDraftRequest request,
+            HttpServletRequest servletRequest) {
+        return new ApiResponse<>(200, "草稿保存成功", draftService.save(
+                reportId(taskId, servletRequest), operatorId(servletRequest), role(servletRequest), request));
+    }
+
     @GetMapping("/review-tasks/{taskId}/records")
     public ApiResponse<List<ReviewRecordView>> reviewRecords(
             @PathVariable long taskId, HttpServletRequest servletRequest) {
@@ -238,14 +250,14 @@ public class ReviewController {
 
     @PostMapping("/reports/{reportId}/check")
     public ApiResponse<CheckResult> check(@PathVariable long reportId, HttpServletRequest servletRequest) {
-        requireInformationManager(servletRequest);
+        requireReviewer(servletRequest);
         return new ApiResponse<>(200, "审核检测完成", issueService.check(reportId));
     }
 
     @PutMapping("/review-issues/{id}/resolve")
     public ApiResponse<Void> resolveIssue(
             @PathVariable long id, HttpServletRequest servletRequest) {
-        requireInformationManager(servletRequest);
+        requireReviewer(servletRequest);
         issueService.resolve(id, operatorId(servletRequest));
         return new ApiResponse<>(200, "审核问题已标记为已处理", null);
     }
@@ -276,10 +288,9 @@ public class ReviewController {
 
     public record ReviewDecisionRequest(String reviewComment) {}
 
-    private void requireInformationManager(HttpServletRequest request) {
-        if (!"INFO_MANAGER".equals(role(request))) {
-            throw new ReviewOperationException(HttpStatus.FORBIDDEN,
-                    "部门负责人只能查看初审留痕并提交终审意见");
+    private void requireReviewer(HttpServletRequest request) {
+        if (!List.of("INFO_MANAGER", "DEPT_MANAGER").contains(role(request))) {
+            throw new ReviewOperationException(HttpStatus.FORBIDDEN, "当前用户无权执行审核操作");
         }
     }
 }

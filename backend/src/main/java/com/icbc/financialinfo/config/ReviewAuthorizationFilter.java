@@ -30,7 +30,7 @@ public class ReviewAuthorizationFilter extends OncePerRequestFilter {
     private static final Pattern ISSUE_RESOLVE = Pattern.compile(
             "^/api/review-issues/[^/]+/resolve$");
     private static final Pattern REVIEW_TASK_ACTION = Pattern.compile(
-            "^/api/review-tasks/[^/]+/(comments|marks|records|replacement-articles|submit|approve|reject|finalize)$");
+            "^/api/review-tasks/[^/]+/(comments|marks|records|replacement-articles|draft|submit|approve|reject|finalize)$");
     private static final Pattern REVIEW_TASK_DETAIL = Pattern.compile(
             "^/api/review-tasks/[^/]+$");
     private static final Pattern REVIEW_TASK_ARTICLE_ACTION = Pattern.compile(
