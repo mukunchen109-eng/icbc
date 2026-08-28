@@ -203,7 +203,9 @@ public class ReportArchiveService {
         List<String[]> rows = jdbc.query("""
                 SELECT a.news_id,n.daily_seq,n.source_row_id,DATE_FORMAT(n.news_date,'%Y-%m-%d'),
                        COALESCE(n.title,a.title),n.original_content,n.content,n.industry,n.area,n.content_hash
-                  FROM report_article a LEFT JOIN news_pool n ON n.id=a.news_id
+                  FROM report_article a
+                  JOIN report r ON r.id=a.report_id
+                  LEFT JOIN news_pool n ON n.daily_seq=a.news_id AND n.news_date=r.report_date
                  WHERE a.report_id=? AND a.select_type='selected' ORDER BY a.id
                 """, (rs, row) -> new String[]{
                 rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5),
