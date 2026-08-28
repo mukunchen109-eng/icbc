@@ -26,5 +26,7 @@ def trigger_daily_report(
     try:
         response=requests.post(api_url, json=payload,timeout=(3,timeout))
         response.raise_for_status()
+    except requests.ReadTimeout:
+        return
     except requests.RequestException as error:
         raise RuntimeError(f"接口调用失败:{error}") from error

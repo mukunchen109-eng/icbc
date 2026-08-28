@@ -82,7 +82,7 @@ def run_collection(target_date: date, trigger_type: str) -> None:
             )
 
             logger.info(
-                "任务成功：日期=%s，处理=%s，写入=%s",
+                "任务成功：日期=%s，处理=%s，写入=%s,%s",
                 target_date,
                 len(articles),
                 result["inserted"],
