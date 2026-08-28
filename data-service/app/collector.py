@@ -5,6 +5,7 @@ import logging
 from app.database import collection_job_exists, create_collection_job, finish_collection_job, save_articles
 from app.excel_reader import read_batches
 from app.html_parser import parse_articles, remove_duplicates
+from app.report_client import trigger_daily_report
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_FILE = BASE_DIR/"data"/"参阅信息.xlsx"
@@ -59,12 +60,25 @@ def run_collection(target_date: date, trigger_type: str) -> None:
 
             result = save_articles(articles)
 
+            report_message = "报告生成通知已发送"
+
+            try:
+                trigger_daily_report(target_date)
+            except Exception as error:
+                report_message = "报告生成通知未确认"
+
+                logger.warning(
+                    "报告生成通知失败：日期=%s，原因=%s",
+                    target_date,
+                    error
+                )
+
             finish_collection_job(
                 task_id,
                 status="SUCCESS",
                 processed_count=len(articles),
                 retry_count=attempt - 1,
-                message=f"成功写入{result['inserted']}条资讯",
+                message=f"成功写入{result['inserted']}条资讯,{report_message}",
             )
 
             logger.info(
@@ -72,12 +86,11 @@ def run_collection(target_date: date, trigger_type: str) -> None:
                 target_date,
                 len(articles),
                 result["inserted"],
+                report_message
             )
 
             print(
-                f"{target_date}采集完成，"
-                f"处理{len(articles)}条，"
-                f"写入{result['inserted']}条"
+                f"{target_date}采集完成，处理{len(articles)}条，写入{result['inserted']}条,{report_message}"
             )
             return
 
