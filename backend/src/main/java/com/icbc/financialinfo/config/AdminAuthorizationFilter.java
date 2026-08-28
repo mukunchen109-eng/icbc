@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets;
   private final ObjectMapper objectMapper;
   private final UserRepository userRepository;
   public AdminAuthorizationFilter(ObjectMapper objectMapper,UserRepository userRepository){this.objectMapper=objectMapper;this.userRepository=userRepository;}
-  @Override protected boolean shouldNotFilter(HttpServletRequest r){return !r.getRequestURI().startsWith("/api/users")||"OPTIONS".equals(r.getMethod());}
+  @Override protected boolean shouldNotFilter(HttpServletRequest r){String path=r.getRequestURI().substring(r.getContextPath().length());return !(path.startsWith("/api/users")||path.startsWith("/api/reports/admin/")||path.startsWith("/api/admin/"))||"OPTIONS".equals(r.getMethod());}
   @Override protected void doFilterInternal(HttpServletRequest req,HttpServletResponse res,FilterChain chain)throws ServletException,IOException{
     String authorization=req.getHeader("Authorization");
     String prefix="Bearer dev-token-";
@@ -25,6 +25,6 @@ import java.nio.charset.StandardCharsets;
       if(isAdmin){chain.doFilter(req,res);return;}
     }
     res.setStatus(403);res.setCharacterEncoding(StandardCharsets.UTF_8.name());res.setContentType(MediaType.APPLICATION_JSON_VALUE);
-    objectMapper.writeValue(res.getWriter(),new ApiResponse<>(403,"仅系统管理员可访问用户权限管理",null));
+    objectMapper.writeValue(res.getWriter(),new ApiResponse<>(403,"仅系统管理员可访问该功能",null));
   }
 }

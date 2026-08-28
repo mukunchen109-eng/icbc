@@ -193,7 +193,7 @@ public class DepartmentMailService {
         if ("COMPLETED".equals(status)) {
             jdbc.update("UPDATE mail_task SET mail_status='COMPLETED',completed_at=CURRENT_TIMESTAMP WHERE id=?", task.id());
             jdbc.update("""
-                    UPDATE report SET status='FINAL_ARCHIVED',locked=1,updated_at=CURRENT_TIMESTAMP
+                    UPDATE report SET status='FINAL_ARCHIVED',updated_at=CURRENT_TIMESTAMP
                      WHERE id=? AND status='FINAL_APPROVED'
                     """, task.reportId());
         } else {

@@ -437,7 +437,7 @@ async function saveDraft() {
     pendingOperations.value = []
     await loadWorkspace()
     dirty.value = false
-    saveNotice.value = `已保存 ${operations.length} 项草稿操作，状态已更新为审核中`
+    saveNotice.value = `已保存 ${operations.length} 项草稿操作`
     return true
   } catch (requestError) {
     saveNotice.value = requestError.response?.data?.message || '草稿保存失败'

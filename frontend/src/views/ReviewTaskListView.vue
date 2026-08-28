@@ -179,11 +179,11 @@ onMounted(load)
     </header>
     <main class="task-list-main">
       <section class="task-list-intro">
-        <div><span class="task-eyebrow">{{ stageName }}工作台</span><h1>{{ isInitial ? '我的审核报告' : '我的终审与待发送报告' }}</h1><p>{{ isInitial ? '查看分配给当前账号的全部初审报告，并按任务状态进行筛选。' : '复核报告并完成定稿；对已完成终审的报告选择接收人员并创建发送任务。' }}</p></div>
+        <div><span class="task-eyebrow">{{ stageName }}工作台</span><h1>{{ isInitial ? '我的审核报告' : '我的终审与待发送报告' }}</h1></div>
         <div class="task-count"><b>{{ total }}</b><span>项任务</span></div>
       </section>
       <section class="task-list-panel">
-        <div class="task-list-toolbar"><div><h2>{{ isInitial ? '审核任务' : '终审与发送任务' }}</h2><span>{{ isInitial ? '显示分配给当前账号的全部初审任务' : '处理终审任务，并发送已经完成终审的报告' }}</span></div><label>任务状态<select v-model="query.status" @change="changeStatus"><template v-if="isInitial"><option value="">全部任务</option><option value="PENDING">待审核</option><option value="REVIEWING">审核中</option><option value="REJECTED">已退回</option></template><template v-else><option value="">全部任务</option><option value="PENDING">待审核</option><option value="REVIEWING">审核中</option><option value="APPROVED">待发送</option><option value="REJECTED">已退回</option><option value="ARCHIVED">已归档</option></template></select></label><button class="outline-button" :disabled="loading" @click="load">刷新</button></div>
+        <div class="task-list-toolbar"><div><h2>{{ isInitial ? '审核任务' : '终审与发送任务' }}</h2></div><label>任务状态<select v-model="query.status" @change="changeStatus"><template v-if="isInitial"><option value="">全部任务</option><option value="PENDING">待审核</option><option value="REVIEWING">审核中</option><option value="REJECTED">已退回</option></template><template v-else><option value="">全部任务</option><option value="PENDING">待审核</option><option value="REVIEWING">审核中</option><option value="APPROVED">待发送</option><option value="REJECTED">已退回</option><option value="ARCHIVED">已归档</option></template></select></label><button class="outline-button" :disabled="loading" @click="load">刷新</button></div>
         <div v-if="error" class="task-error"><b>暂时无法加载任务</b><span>{{ error }}</span><button @click="load">重新加载</button></div>
         <div v-else-if="loading" class="task-empty"><span class="task-spinner"></span><b>正在加载审核任务…</b></div>
         <div v-else-if="!records.length" class="task-empty"><span class="task-empty-icon">✓</span><b>当前没有{{ query.status ? taskStatusText(query.status) : '' }}任务</b><p>新的{{ stageName }}任务到达后会显示在这里。</p></div>

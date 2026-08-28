@@ -7,7 +7,7 @@ const routes = [
   { path: '/review-tasks', name: 'review-tasks', component: () => import('../views/ReviewTaskListView.vue') },
   { path: '/review-tasks/:taskId', name: 'review-workbench', component: () => import('../views/ReviewWorkbenchView.vue') },
   { path: '/', component: MainLayout, children: [
-  { path: '', redirect: '/dashboard' }, { path: 'dashboard', component: () => import('../views/DashboardView.vue') }, { path: 'collection', component: () => import('../views/CollectionView.vue') }, { path: 'preprocess', component: () => import('../views/PreprocessView.vue') }, { path: 'report', component: () => import('../views/ReportView.vue') }, { path: 'review', component: () => import('../views/ReviewView.vue') }, { path: 'distribution', component: () => import('../views/DistributionView.vue') }, { path: 'task', component: () => import('../views/TaskView.vue') }, { path: 'user', component: () => import('../views/UserView.vue'), meta: { adminOnly: true } }
+  { path: '', redirect: '/dashboard' }, { path: 'dashboard', component: () => import('../views/DashboardView.vue') }, { path: 'review', component: () => import('../views/ReviewView.vue') }, { path: 'distribution', component: () => import('../views/DistributionView.vue') }, { path: 'task', component: () => import('../views/TaskView.vue') }, { path: 'user', component: () => import('../views/UserView.vue'), meta: { adminOnly: true } }
 ] }]
 const router = createRouter({ history: createWebHistory(), routes })
 router.beforeEach(to => {

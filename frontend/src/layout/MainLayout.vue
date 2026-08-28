@@ -2,7 +2,7 @@
 import { isAdmin, useAuthStore } from '../stores/auth'
 import { useRouter } from 'vue-router'
 const auth = useAuthStore(); const router = useRouter()
-const menus = [['/dashboard','工作台'],['/collection','数据采集'],['/preprocess','数据预处理'],['/report','智能报告'],['/review','人机审核'],['/distribution','精准分发'],['/task','任务与日志'],['/user','用户权限']]
+const menus = [['/dashboard','工作台'],['/review','人机审核'],['/distribution','精准分发'],['/task','任务与日志'],['/user','用户权限']]
 if (!isAdmin(auth.user)) menus.pop()
 function logout(){ auth.logout(); router.push('/login') }
 </script>
