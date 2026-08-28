@@ -7,3 +7,4 @@
 @media(max-width:900px){.review-legend span:last-child{width:auto}}
 
 ::highlight(sensitive-word){background:#e74b55;color:#fff}
+::highlight(data-inconsistency){color:#8a5700;text-decoration:underline wavy #e9871f 2px;text-underline-offset:3px}

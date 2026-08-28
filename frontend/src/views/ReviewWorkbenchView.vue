@@ -44,9 +44,9 @@ const reviewRecords = ref([])
 const pendingOperations = ref([])
 const sensitiveWords = ['绝对安全']
 const localSensitiveMatches = ref([])
+const localDataMatches = ref([])
 const reviewComment = ref('')
 const submitting = ref(false)
-const checking = ref(false)
 const draft = ref('')
 const annotationText = ref('')
 const selectedText = ref('')
@@ -113,11 +113,14 @@ async function loadWorkspace() {
   }
 }
 
+function getArticleSource(articleId) {
+  return sources.value.find(source => Number(source.articleId) === Number(articleId)) || null
+}
 function focusSourceForDraftEntry(event) {
   const section = event.target.closest?.('.entry')
   if (!section || !sourcePanel.value) return
   const article = articles.value.find(item => item.sequenceNo === Number(section.dataset.sequence))
-  const source = sources.value.find(item => item.articleId === article?.id || item.newsId === article?.newsId)
+  const source = getArticleSource(article?.id)
   if (!source) return
   const target = sourcePanel.value.querySelector(`[data-daily-seq="${source.dailySeq}"]`)
   if (!target) return
@@ -167,8 +170,100 @@ function scheduleSensitiveHighlights() {
   cancelAnimationFrame(sensitiveHighlightFrame)
   sensitiveHighlightFrame = requestAnimationFrame(refreshSensitiveHighlights)
 }
+const numberPattern = /\d[\d,，]*(?:\.\d+)?(?:[%％])?/g
+function normalizeNumber(value) {
+  return String(value || '').replace(/[，,]/g, '').replaceAll('％', '%')
+}
+function createTextRange(element, start, end) {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  let node
+  let offset = 0
+  let startNode
+  let endNode
+  let startOffset
+  let endOffset
+  while ((node = walker.nextNode())) {
+    const nodeEnd = offset + node.nodeValue.length
+    if (!startNode && start >= offset && start < nodeEnd) {
+      startNode = node
+      startOffset = start - offset
+    }
+    if (startNode && end > offset && end <= nodeEnd) {
+      endNode = node
+      endOffset = end - offset
+      break
+    }
+    offset = nodeEnd
+  }
+  if (!startNode || !endNode) return null
+  const range = document.createRange()
+  range.setStart(startNode, startOffset)
+  range.setEnd(endNode, endOffset)
+  return range
+}
+function refreshDataHighlights() {
+  if (!draftEditor.value) return
+  const ranges = []
+  const matches = []
+  for (const section of draftEditor.value.querySelectorAll('.entry')) {
+    const sequenceNo = Number(section.dataset.sequence)
+    const article = articles.value.find(item => item.sequenceNo === sequenceNo)
+    const source = getArticleSource(article?.id)
+    const paragraph = section.querySelector('p')
+    if (!article || !source || !paragraph) continue
+    const summary = paragraph.textContent || ''
+    const sourceText = normalizeNumber(source.originalContent || source.content)
+    const sourceNumbers = new Set(Array.from(
+      sourceText.matchAll(numberPattern),
+      match => normalizeNumber(match[0])
+    ))
+    for (const match of summary.matchAll(numberPattern)) {
+      const currentNumber = normalizeNumber(match[0])
+      if (sourceNumbers.has(currentNumber)) continue
+      const startOffset = match.index
+      const endOffset = startOffset + match[0].length
+      const range = createTextRange(paragraph, startOffset, endOffset)
+      if (!range) continue
+      ranges.push(range)
+      matches.push({
+        sequenceNo,
+        articleId: article.id,
+        matchedText: match[0],
+        startOffset,
+        endOffset,
+        message: `数据不一致：报告中的“${match[0]}”未在对应原始资讯中找到`
+      })
+    }
+  }
+  localDataMatches.value = matches
+  if (window.CSS?.highlights && typeof window.Highlight !== 'undefined') {
+    CSS.highlights.set('data-inconsistency', new Highlight(...ranges))
+  }
+}
+function findDataMatchAtPoint(event) {
+  const caret = document.caretRangeFromPoint?.(event.clientX, event.clientY)
+  if (!caret) return null
+  const element = caret.startContainer.nodeType === Node.TEXT_NODE
+    ? caret.startContainer.parentElement : caret.startContainer
+  const paragraph = element?.closest?.('.entry p')
+  const section = paragraph?.closest('.entry')
+  if (!paragraph || !section) return null
+  const before = document.createRange()
+  before.selectNodeContents(paragraph)
+  try {
+    before.setEnd(caret.startContainer, caret.startOffset)
+  } catch {
+    return null
+  }
+  const offset = before.toString().length
+  const sequenceNo = Number(section.dataset.sequence)
+  return localDataMatches.value.find(item =>
+    item.sequenceNo === sequenceNo && offset >= item.startOffset && offset < item.endOffset
+  )
+}
 function persistDraft() {
   scheduleSensitiveHighlights()
+  refreshDataHighlights()
 }
 function markDirty() { dirty.value = true; saveNotice.value = '' }
 function handleDraftInput() {
@@ -283,15 +378,25 @@ async function addAnnotation() {
 }
 function showAnnotationBubble(event) {
   const target = event.target.closest?.('.annotation-mark')
-  if (!target) { hideAnnotationBubble(); return }
+  if (target) {
+    clearTimeout(hoverTimer)
+    const annotation = annotations.value.find(item => String(item.id) === target.dataset.annotationId)
+    if (!annotation) return
+    const rect = target.getBoundingClientRect()
+    hoverBubble.value = {
+      kind: 'annotation', title: '批注信息',
+      text: `${annotation.operatorUsername}：${annotation.note}`,
+      left: Math.min(rect.left, window.innerWidth - 310), top: rect.bottom + 8, width: 290
+    }
+    return
+  }
+  const issue = findDataMatchAtPoint(event)
+  if (!issue) { hideAnnotationBubble(); return }
   clearTimeout(hoverTimer)
-  const annotation = annotations.value.find(item => String(item.id) === target.dataset.annotationId)
-  if (!annotation) return
-  const rect = target.getBoundingClientRect()
   hoverBubble.value = {
-    kind: 'annotation', title: '批注信息',
-    text: `${annotation.operatorUsername}：${annotation.note}`,
-    left: Math.min(rect.left, window.innerWidth - 310), top: rect.bottom + 8, width: 290
+    kind: 'data', title: '数据不一致', text: issue.message,
+    left: Math.min(event.clientX + 10, window.innerWidth - 310),
+    top: event.clientY + 18, width: 290
   }
 }
 function hideAnnotationBubble() { clearTimeout(hoverTimer); hoverTimer = setTimeout(() => { hoverBubble.value = null }, 40) }
@@ -338,21 +443,6 @@ async function saveDraft() {
     saveNotice.value = requestError.response?.data?.message || '草稿保存失败'
     return false
   } finally { saving.value = false }
-}
-async function runCheck() {
-  if (dirty.value) {
-    saveNotice.value = '请先保存草稿，再重新执行敏感词和数据一致性检测'
-    return
-  }
-  checking.value = true
-  try {
-    await http.post(`/reports/${selectedReport.value.reportId}/check`)
-    const { data } = await http.get(`/reports/${selectedReport.value.reportId}/issues`)
-    issues.value = data?.data || []
-    saveNotice.value = `检测完成，发现 ${issues.value.length} 项问题`
-  } catch (requestError) {
-    saveNotice.value = requestError.response?.data?.message || '检测失败'
-  } finally { checking.value = false }
 }
 async function resolveIssueItem(issue) {
   if (pendingOperations.value.some(item => item.type === 'RESOLVE_ISSUE' && item.issueId === issue.id)) return
@@ -467,6 +557,7 @@ onMounted(loadWorkspace)
 onUnmounted(() => {
   cancelAnimationFrame(sensitiveHighlightFrame)
   window.CSS?.highlights?.delete('sensitive-word')
+  window.CSS?.highlights?.delete('data-inconsistency')
 })
 </script>
 
@@ -479,8 +570,8 @@ onUnmounted(() => {
     <div v-else-if="loading" class="task-empty"><span class="task-spinner"></span><b>正在加载报告与原始资讯…</b></div>
     <main v-else class="review-workspace">
       <article class="document-panel draft-panel"><div class="document-title"><div><h2>报告草稿</h2></div><span class="status-dot">{{ isFinalReviewer ? '终审中' : '初审中' }}</span></div>
-        <div v-if="canEdit" class="review-toolbar"><button class="tool-button" @mousedown.prevent @click="markModify">标记修改</button><button class="tool-button" @mousedown.prevent @click="openAnnotation">添加批注</button><button class="tool-button" :class="{ 'replacement-active': replacementMode }" @click="toggleReplacementMode">{{ replacementMode ? '取消替换' : '替换资讯' }}</button><button class="tool-button" :disabled="checking" @click="runCheck">{{ checking ? '检测中…' : '重新检测' }}</button></div>
-        <div ref="draftEditor" class="draft-editor" :contenteditable="canEdit" @keydown="preventDraftLineBreak" @beforeinput="preventDraftLineBreak" @input="handleDraftInput" @mouseup="captureSelection" @click="handleDraftClick" @mouseover="showAnnotationBubble" @mouseout="hideAnnotationBubble" v-html="draft"></div>
+        <div v-if="canEdit" class="review-toolbar"><button class="tool-button" @mousedown.prevent @click="markModify">标记修改</button><button class="tool-button" @mousedown.prevent @click="openAnnotation">添加批注</button><button class="tool-button" :class="{ 'replacement-active': replacementMode }" @click="toggleReplacementMode">{{ replacementMode ? '取消替换' : '替换资讯' }}</button></div>
+        <div ref="draftEditor" class="draft-editor" :contenteditable="canEdit" @keydown="preventDraftLineBreak" @beforeinput="preventDraftLineBreak" @input="handleDraftInput" @mouseup="captureSelection" @click="handleDraftClick" @mousemove="showAnnotationBubble" @mouseleave="hideAnnotationBubble" v-html="draft"></div>
         <div v-if="showAnnotation" class="annotation-composer"><span :title="selectedText">添加批注：{{ selectedTextPreview }}</span><input v-model="annotationText" placeholder="输入批注内容"><button @click="addAnnotation">添加</button></div>
         <div class="issue-summary"><div><b>敏感内容</b><span v-for="item in localSensitiveMatches" :key="`${item.word}-${item.occurrence}`" class="sensitive-chip" title="草稿中检测到的敏感词">{{ item.word }}</span><span v-if="!localSensitiveMatches.length">未发现敏感词</span></div><div><b>数据核验</b><button v-for="item in issues.filter(issue => issue.issueType !== 'SENSITIVE_CONTENT' && !issue.resolved)" :key="item.id" class="data-chip" :disabled="!canEdit" :title="canEdit ? `${item.message}；点击标记处理` : item.message" @click="resolveIssueItem(item)">{{ item.issueType }}：{{ item.matchedText }}</button></div></div>
       </article>
