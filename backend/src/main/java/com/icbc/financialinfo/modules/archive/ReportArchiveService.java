@@ -10,9 +10,22 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
+import org.apache.poi.xwpf.usermodel.TableWidthType;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
+import org.apache.poi.xwpf.usermodel.XWPFTable;
+import org.apache.poi.xwpf.usermodel.XWPFTableCell;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTBorder;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPageMar;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPageSz;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTP;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPBdr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSectPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblBorders;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STBorder;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -25,6 +38,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
+import java.math.BigInteger;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -36,19 +51,29 @@ import java.util.zip.ZipOutputStream;
 @Service
 public class ReportArchiveService {
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter CHINESE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy 年 M 月 d 日");
+    private static final String REPORT_NAME = "每日经济金融信息";
+    private static final String DEPARTMENT_NAME = "数据管理部";
+    private static final String COPYRIGHT_NOTICE =
+            "注：限于版权方对使用权授权范围的约束，请勿将安邦信息（每日金融、每日经济）对外转发。"
+                    + "具体内容可详见“北京资讯管理”邮箱每日下午发送的同名邮件。";
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final Path archiveRoot;
     private final Path reportFont;
+    private final Path reportTitleFont;
 
     public ReportArchiveService(JdbcTemplate jdbc,
                                 ObjectMapper objectMapper,
                                 @Value("${app.archive.root:./data/archives}") String archiveRoot,
-                                @Value("${app.archive.report-font:}") String reportFont) {
+                                @Value("${app.archive.report-font:}") String reportFont,
+                                @Value("${app.archive.report-title-font:}") String reportTitleFont) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
         this.archiveRoot = Path.of(archiveRoot).toAbsolutePath().normalize();
         this.reportFont = reportFont == null || reportFont.isBlank() ? null : Path.of(reportFont).toAbsolutePath();
+        this.reportTitleFont = reportTitleFont == null || reportTitleFont.isBlank()
+                ? null : Path.of(reportTitleFont).toAbsolutePath();
     }
 
     public PreparedArtifacts prepare(long reportId) {
@@ -151,26 +176,56 @@ public class ReportArchiveService {
 
     private void writeDocx(ReportData report, List<ArticleData> articles, Path output) throws IOException {
         try (XWPFDocument document = new XWPFDocument(); OutputStream stream = Files.newOutputStream(output)) {
+            configurePage(document);
+
             XWPFParagraph title = document.createParagraph();
             title.setAlignment(ParagraphAlignment.CENTER);
-            run(title, report.reportTitle(), 18, true);
-            XWPFParagraph date = document.createParagraph();
-            date.setAlignment(ParagraphAlignment.CENTER);
-            run(date, "报告日期：" + report.reportDate(), 11, false);
-            String category = null;
-            int categoryIndex = 0;
+            title.setSpacingBefore(400);
+            title.setSpacingAfter(280);
+            run(title, REPORT_NAME, 30, true, "SimHei", "FF0000");
+
+            XWPFTable metadata = document.createTable(1, 3);
+            metadata.setWidthType(TableWidthType.PCT);
+            metadata.setWidth("100%");
+            removeTableBorders(metadata);
+            metadataCell(metadata.getRow(0).getCell(0), DEPARTMENT_NAME, ParagraphAlignment.LEFT);
+            metadataCell(metadata.getRow(0).getCell(1), issueNumber(report), ParagraphAlignment.CENTER);
+            metadataCell(metadata.getRow(0).getCell(2), chineseDate(report.reportDate()), ParagraphAlignment.RIGHT);
+
+            XWPFParagraph divider = document.createParagraph();
+            divider.setSpacingAfter(320);
+            CTPBdr borders = paragraphProperties(divider).addNewPBdr();
+            CTBorder bottom = borders.addNewBottom();
+            bottom.setVal(STBorder.DOUBLE);
+            bottom.setColor("FF0000");
+            bottom.setSz(BigInteger.valueOf(12));
+
             for (ArticleData article : articles) {
-                if (!equals(category, article.category())) {
-                    category = article.category();
-                    XWPFParagraph heading = document.createParagraph();
-                    run(heading, chineseNumber(++categoryIndex) + "、" + displayCategory(category), 14, true);
-                }
                 XWPFParagraph itemTitle = document.createParagraph();
-                run(itemTitle, article.sequence() + ".【" + article.title() + "】", 12, true);
+                itemTitle.setAlignment(ParagraphAlignment.CENTER);
+                itemTitle.setKeepNext(true);
+                itemTitle.setSpacingBefore(160);
+                itemTitle.setSpacingAfter(100);
+                run(itemTitle, articleHeading(article), 14, true, "SimHei", "000000");
+
                 XWPFParagraph summary = document.createParagraph();
-                summary.setIndentationFirstLine(420);
-                run(summary, nullToEmpty(article.summary()), 11, false);
+                summary.setAlignment(ParagraphAlignment.BOTH);
+                summary.setIndentationFirstLine(480);
+                summary.setSpacingBetween(1.5);
+                summary.setSpacingAfter(120);
+                run(summary, normalizeBody(article.summary()), 12, false, "FangSong", "000000");
             }
+
+            XWPFParagraph separator = document.createParagraph();
+            separator.setSpacingBefore(120);
+            separator.setSpacingAfter(80);
+            run(separator, "----------------------------------------------------------------------------------------------------",
+                    10, false, "FangSong", "000000");
+            XWPFParagraph notice = document.createParagraph();
+            notice.setAlignment(ParagraphAlignment.BOTH);
+            notice.setIndentationFirstLine(480);
+            notice.setSpacingBetween(1.4);
+            run(notice, COPYRIGHT_NOTICE, 11, false, "FangSong", "000000");
             document.write(stream);
         }
     }
@@ -180,20 +235,16 @@ public class ReportArchiveService {
             throw new IOException("未找到中文字体，请通过 REPORT_FONT_PATH 配置字体文件");
         }
         try (PDDocument document = new PDDocument()) {
-            PDFont font = PDType0Font.load(document, reportFont.toFile());
-            try (PdfTextWriter writer = new PdfTextWriter(document, font)) {
-                writer.center(report.reportTitle(), 18, 28);
-                writer.center("报告日期：" + report.reportDate(), 11, 24);
-                String category = null;
-                int categoryIndex = 0;
+            PDFont bodyFont = PDType0Font.load(document, reportFont.toFile());
+            PDFont titleFont = reportTitleFont != null && Files.isRegularFile(reportTitleFont)
+                    ? PDType0Font.load(document, reportTitleFont.toFile()) : bodyFont;
+            try (PdfTextWriter writer = new PdfTextWriter(document, bodyFont, titleFont)) {
+                writer.header(REPORT_NAME, DEPARTMENT_NAME, issueNumber(report), chineseDate(report.reportDate()));
                 for (ArticleData article : articles) {
-                    if (!equals(category, article.category())) {
-                        category = article.category();
-                        writer.paragraph(chineseNumber(++categoryIndex) + "、" + displayCategory(category), 14, 22);
-                    }
-                    writer.paragraph(article.sequence() + ".【" + article.title() + "】", 12, 19);
-                    writer.paragraph(nullToEmpty(article.summary()), 11, 18);
+                    writer.articleTitle(articleHeading(article));
+                    writer.body(normalizeBody(article.summary()));
                 }
+                writer.footer(COPYRIGHT_NOTICE);
             }
             document.save(output.toFile());
         }
@@ -278,12 +329,77 @@ public class ReportArchiveService {
         }
     }
 
-    private void run(XWPFParagraph paragraph, String text, int size, boolean bold) {
+    private void configurePage(XWPFDocument document) {
+        CTSectPr section = document.getDocument().getBody().isSetSectPr()
+                ? document.getDocument().getBody().getSectPr()
+                : document.getDocument().getBody().addNewSectPr();
+        CTPageSz pageSize = section.isSetPgSz() ? section.getPgSz() : section.addNewPgSz();
+        pageSize.setW(BigInteger.valueOf(11906));
+        pageSize.setH(BigInteger.valueOf(16838));
+        CTPageMar margins = section.isSetPgMar() ? section.getPgMar() : section.addNewPgMar();
+        margins.setLeft(BigInteger.valueOf(1700));
+        margins.setRight(BigInteger.valueOf(1700));
+        margins.setTop(BigInteger.valueOf(1250));
+        margins.setBottom(BigInteger.valueOf(1250));
+    }
+
+    private void removeTableBorders(XWPFTable table) {
+        CTTblPr properties = table.getCTTbl().getTblPr();
+        CTTblBorders borders = properties.isSetTblBorders()
+                ? properties.getTblBorders() : properties.addNewTblBorders();
+        for (CTBorder border : List.of(borders.addNewTop(), borders.addNewLeft(), borders.addNewBottom(),
+                borders.addNewRight(), borders.addNewInsideH(), borders.addNewInsideV())) {
+            border.setVal(STBorder.NIL);
+        }
+    }
+
+    private void metadataCell(XWPFTableCell cell, String text, ParagraphAlignment alignment) {
+        XWPFParagraph paragraph = cell.getParagraphs().get(0);
+        paragraph.setAlignment(alignment);
+        paragraph.setSpacingAfter(0);
+        run(paragraph, text, 12, false, "FangSong", "000000");
+    }
+
+    private CTPPr paragraphProperties(XWPFParagraph paragraph) {
+        CTP ctp = paragraph.getCTP();
+        return ctp.isSetPPr() ? ctp.getPPr() : ctp.addNewPPr();
+    }
+
+    private void run(XWPFParagraph paragraph, String text, int size, boolean bold, String font, String color) {
         XWPFRun run = paragraph.createRun();
-        run.setFontFamily("Microsoft YaHei");
+        run.setFontFamily(font);
+        run.setFontFamily(font, XWPFRun.FontCharRange.eastAsia);
         run.setFontSize(size);
         run.setBold(bold);
+        run.setColor(color);
         run.setText(nullToEmpty(text));
+    }
+
+    private String issueNumber(ReportData report) { return "第 " + report.id() + " 期"; }
+    private String chineseDate(String value) {
+        try { return LocalDate.parse(value).format(CHINESE_DATE_FORMAT); }
+        catch (RuntimeException ignored) { return nullToEmpty(value); }
+    }
+    private String normalizeBody(String value) {
+        return nullToEmpty(value).replace('\r', ' ').replace('\n', ' ').replaceAll("\\s+", " ").trim();
+    }
+    private String articleHeading(ArticleData article) {
+        String title = nullToEmpty(article.title()).trim();
+        if (title.startsWith("【") && title.endsWith("】")) return title;
+        String label = headlineCategory(article.category());
+        if (!label.isBlank() && !title.startsWith(label + "：") && !title.startsWith(label + ":")) {
+            title = label + "：" + title;
+        }
+        return "【" + title + "】";
+    }
+    private String headlineCategory(String value) {
+        if (value == null || value.isBlank()) return "";
+        return switch (value.trim().toUpperCase()) {
+            case "FINANCE", "MACRO", "金融", "宏观", "宏观经济" -> "形势要点";
+            case "MARKET", "市场" -> "市场";
+            case "BEIJING_POLICY", "属地政策", "北京" -> "首都经济";
+            default -> value.trim();
+        };
     }
 
     private String safeFileName(String value) {
@@ -296,21 +412,7 @@ public class ReportArchiveService {
         String message = exception.getMessage();
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
-    private boolean equals(String left, String right) { return java.util.Objects.equals(left, right); }
     private String nullToEmpty(String value) { return value == null ? "" : value; }
-    private String displayCategory(String value) {
-        if (value == null || value.isBlank()) return "资讯";
-        return switch (value.toUpperCase()) {
-            case "FINANCE" -> "金融领域";
-            case "MACRO" -> "宏观经济";
-            case "BEIJING_POLICY" -> "属地政策";
-            default -> value;
-        };
-    }
-    private String chineseNumber(int number) {
-        String[] values = {"零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"};
-        return number >= 1 && number <= 10 ? values[number] : String.valueOf(number);
-    }
 
     public record PreparedArtifacts(ReportData report, Path pdf, Path docx, Path rawCsv, Path reviewCsv) {
         public List<AttachmentInfo> attachments() {
@@ -329,33 +431,93 @@ public class ReportArchiveService {
     private record ArticleData(long id, int sequence, String category, String title, String summary) {}
 
     private static final class PdfTextWriter implements AutoCloseable {
-        private static final float MARGIN = 52;
+        private static final float MARGIN = 68;
+        private static final float TOP = 774;
+        private static final float BOTTOM = 58;
+        private static final float BODY_SIZE = 11.5f;
+        private static final float BODY_LINE_HEIGHT = 20.5f;
         private final PDDocument document;
         private final PDFont font;
+        private final PDFont titleFont;
         private PDPageContentStream content;
         private float y;
 
-        private PdfTextWriter(PDDocument document, PDFont font) throws IOException {
+        private PdfTextWriter(PDDocument document, PDFont font, PDFont titleFont) throws IOException {
             this.document = document;
             this.font = font;
+            this.titleFont = titleFont;
             newPage();
         }
 
-        private void center(String text, float size, float gap) throws IOException {
-            ensureSpace(gap);
-            float width = font.getStringWidth(text) / 1000 * size;
-            writeLine(text, Math.max(MARGIN, (PDRectangle.A4.getWidth() - width) / 2), size);
-            y -= gap;
+        private void header(String title, String department, String issue, String date) throws IOException {
+            center(title, 30, true, 255, 0, 0);
+            y -= 42;
+            writeLine(department, MARGIN, 12, false, 0, 0, 0, 0);
+            writeCenteredLine(issue, 12, false, 0, 0, 0);
+            float dateWidth = textWidth(date, 12);
+            writeLine(date, PDRectangle.A4.getWidth() - MARGIN - dateWidth, 12, false, 0, 0, 0, 0);
+            y -= 15;
+            content.setStrokingColor(255, 0, 0);
+            content.setLineWidth(1.2f);
+            content.moveTo(MARGIN, y);
+            content.lineTo(PDRectangle.A4.getWidth() - MARGIN, y);
+            content.stroke();
+            content.moveTo(MARGIN, y - 4);
+            content.lineTo(PDRectangle.A4.getWidth() - MARGIN, y - 4);
+            content.stroke();
+            content.setStrokingColor(0, 0, 0);
+            y -= 38;
         }
 
-        private void paragraph(String text, float size, float lineHeight) throws IOException {
-            List<String> lines = wrap(text, size, PDRectangle.A4.getWidth() - MARGIN * 2);
+        private void articleTitle(String text) throws IOException {
+            List<String> lines = wrap(text, 13.5f, PDRectangle.A4.getWidth() - MARGIN * 2 - 24);
+            ensureSpace(lines.size() * 21 + BODY_LINE_HEIGHT * 2 + 12);
             for (String line : lines) {
-                ensureSpace(lineHeight);
-                writeLine(line, MARGIN, size);
-                y -= lineHeight;
+                writeCenteredLine(line, 13.5f, true, 0, 0, 0);
+                y -= 21;
             }
-            y -= 5;
+            y -= 7;
+        }
+
+        private void body(String text) throws IOException {
+            float maxWidth = PDRectangle.A4.getWidth() - MARGIN * 2;
+            float firstIndent = BODY_SIZE * 2;
+            List<TextLine> lines = wrapParagraph(text, BODY_SIZE, maxWidth, firstIndent);
+            for (int index = 0; index < lines.size(); index++) {
+                TextLine line = lines.get(index);
+                ensureSpace(BODY_LINE_HEIGHT);
+                float indent = line.first() ? firstIndent : 0;
+                float available = maxWidth - indent;
+                boolean justify = index < lines.size() - 1 && line.text().codePointCount(0, line.text().length()) > 1;
+                writeLine(line.text(), MARGIN + indent, BODY_SIZE, false, 0, 0, 0,
+                        justify ? Math.max(0, (available - textWidth(line.text(), BODY_SIZE))
+                                / (line.text().codePointCount(0, line.text().length()) - 1)) : 0);
+                y -= BODY_LINE_HEIGHT;
+            }
+            y -= 11;
+        }
+
+        private void footer(String notice) throws IOException {
+            ensureSpace(74);
+            content.setLineDashPattern(new float[]{4, 2}, 0);
+            content.setLineWidth(0.8f);
+            content.moveTo(MARGIN, y);
+            content.lineTo(PDRectangle.A4.getWidth() - MARGIN, y);
+            content.stroke();
+            content.setLineDashPattern(new float[]{}, 0);
+            y -= 22;
+            body(notice);
+        }
+
+        private void center(String text, float size, boolean bold, int red, int green, int blue) throws IOException {
+            writeCenteredLine(text, size, bold, red, green, blue);
+        }
+
+        private void writeCenteredLine(String text, float size, boolean bold,
+                                       int red, int green, int blue) throws IOException {
+            float width = textWidth(text, size, bold);
+            writeLine(text, Math.max(MARGIN, (PDRectangle.A4.getWidth() - width) / 2),
+                    size, bold, red, green, blue, 0);
         }
 
         private List<String> wrap(String text, float size, float maxWidth) throws IOException {
@@ -366,7 +528,7 @@ public class ReportArchiveService {
                 int codePoint = normalized.codePointAt(offset);
                 String character = new String(Character.toChars(codePoint));
                 String candidate = line + character;
-                if (!line.isEmpty() && font.getStringWidth(candidate) / 1000 * size > maxWidth) {
+                if (!line.isEmpty() && titleFont.getStringWidth(candidate) / 1000 * size > maxWidth) {
                     lines.add(line.toString());
                     line.setLength(0);
                 }
@@ -377,8 +539,31 @@ public class ReportArchiveService {
             return lines;
         }
 
+        private List<TextLine> wrapParagraph(String text, float size, float maxWidth, float firstIndent)
+                throws IOException {
+            String normalized = text == null ? "" : text.replace('\r', ' ').replace('\n', ' ')
+                    .replaceAll("\\s+", " ").trim();
+            List<TextLine> lines = new ArrayList<>();
+            StringBuilder line = new StringBuilder();
+            boolean first = true;
+            for (int offset = 0; offset < normalized.length();) {
+                int codePoint = normalized.codePointAt(offset);
+                String character = new String(Character.toChars(codePoint));
+                float available = maxWidth - (first ? firstIndent : 0);
+                if (!line.isEmpty() && textWidth(line + character, size) > available) {
+                    lines.add(new TextLine(line.toString(), first));
+                    line.setLength(0);
+                    first = false;
+                }
+                line.append(character);
+                offset += Character.charCount(codePoint);
+            }
+            if (!line.isEmpty() || lines.isEmpty()) lines.add(new TextLine(line.toString(), first));
+            return lines;
+        }
+
         private void ensureSpace(float needed) throws IOException {
-            if (y - needed < MARGIN) newPage();
+            if (y - needed < BOTTOM) newPage();
         }
 
         private void newPage() throws IOException {
@@ -386,17 +571,31 @@ public class ReportArchiveService {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
             content = new PDPageContentStream(document, page);
-            y = PDRectangle.A4.getHeight() - MARGIN;
+            y = TOP;
         }
 
-        private void writeLine(String text, float x, float size) throws IOException {
+        private float textWidth(String text, float size) throws IOException {
+            return font.getStringWidth(text) / 1000 * size;
+        }
+
+        private float textWidth(String text, float size, boolean title) throws IOException {
+            return (title ? titleFont : font).getStringWidth(text) / 1000 * size;
+        }
+
+        private void writeLine(String text, float x, float size, boolean bold,
+                               int red, int green, int blue, float characterSpacing) throws IOException {
             content.beginText();
-            content.setFont(font, size);
+            content.setFont(bold ? titleFont : font, size);
+            content.setNonStrokingColor(red, green, blue);
+            content.setCharacterSpacing(characterSpacing);
             content.newLineAtOffset(x, y);
             content.showText(text);
             content.endText();
+            content.setCharacterSpacing(0);
+            content.setNonStrokingColor(0, 0, 0);
         }
 
         @Override public void close() throws IOException { if (content != null) content.close(); }
+        private record TextLine(String text, boolean first) {}
     }
 }

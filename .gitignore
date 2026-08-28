@@ -1,12 +1,15 @@
 .idea/
 .vscode/
+.DS_Store
 backend/target/
 backend/data/
+backend/config/application.yml
 frontend/node_modules/
 frontend/dist/
 springboot-vue/
 *.log
-work/
+
+# Python data service
 data-service/.venv/
 data-service/**/__pycache__/
 data-service/*.egg-info/
@@ -15,3 +18,7 @@ data-service/.env
 data-service/app/preview.py
 data-service/output/
 *.pyc
+
+work/
+tmp/
+output/

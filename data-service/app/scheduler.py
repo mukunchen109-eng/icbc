@@ -48,10 +48,10 @@ def main():
     print(f"当前北京时间：{now:%Y-%m-%d %H:%M:%S}")
     print(f"每日采集时间：{hour:02d}:{minute:02d}")
 
+    print("定时采集程序正在启动")
+
     if (now.hour, now.minute) >= (hour, minute): #若程序在当天九点后启动，补跑当日信息采集
         run_collection(now.date(), "CATCH_UP")
-
-    print("定时采集程序已启动")
 
     try:
         scheduler.start()
