@@ -1,6 +1,7 @@
 from datetime import date
 from pathlib import Path
 import logging
+from threading import Thread
 
 from app.database import collection_job_exists, create_collection_job, finish_collection_job, save_articles
 from app.excel_reader import read_batches
@@ -60,38 +61,26 @@ def run_collection(target_date: date, trigger_type: str) -> None:
 
             result = save_articles(articles)
 
-            report_message = "报告生成通知已发送"
-
-            try:
-                trigger_daily_report(target_date)
-            except Exception as error:
-                report_message = "报告生成通知未确认"
-
-                logger.warning(
-                    "报告生成通知失败：日期=%s，原因=%s",
-                    target_date,
-                    error
-                )
-
             finish_collection_job(
                 task_id,
                 status="SUCCESS",
                 processed_count=len(articles),
                 retry_count=attempt - 1,
-                message=f"成功写入{result['inserted']}条资讯,{report_message}",
+                message=f"成功写入{result['inserted']}条资讯",
             )
 
             logger.info(
-                "任务成功：日期=%s，处理=%s，写入=%s,%s",
+                "任务成功：日期=%s，处理=%s，写入=%s",
                 target_date,
                 len(articles),
-                result["inserted"],
-                report_message
+                result["inserted"]
             )
 
             print(
-                f"{target_date}采集完成，处理{len(articles)}条，写入{result['inserted']}条,{report_message}"
+                f"{target_date}采集完成，处理{len(articles)}条，写入{result['inserted']}条"
             )
+
+            notify_report_in_background(target_date)
             return
 
         except Exception as error:
@@ -99,7 +88,7 @@ def run_collection(target_date: date, trigger_type: str) -> None:
                 logger.warning(
                     "第%s次执行失败：%s",
                     attempt,
-                    error,
+                    error
                 )
                 print(f"第{attempt}次采集失败，准备重试：{error}")
                 continue
@@ -114,3 +103,17 @@ def run_collection(target_date: date, trigger_type: str) -> None:
                 message=str(error)[:1000],
             )
             raise
+
+
+def notify_report_in_background(target_date: date) -> None:
+    def send():
+        try:
+            trigger_daily_report(target_date)
+            logger.info("报告生成完成：日期=%s", target_date)
+        except Exception as error:
+            logger.warning(
+                "报告生成失败：日期=%s，原因=%s",
+                target_date,
+                error
+            )
+    Thread(target=send, daemon=True).start()
