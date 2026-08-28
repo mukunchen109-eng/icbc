@@ -1,0 +1,9 @@
+# Copy this file to config/application.yml and fill in a newly generated
+# QQ Mail SMTP authorization code. config/application.yml is ignored by Git.
+spring:
+  mail:
+    password: YOUR_QQ_SMTP_AUTH_CODE
+
+app:
+  mail:
+    enabled: true

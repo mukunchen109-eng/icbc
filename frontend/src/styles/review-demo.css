@@ -1,0 +1,33 @@
+.demo-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 3px 7px;
+  border-radius: 12px;
+  background: #eef0ff;
+  color: #5b58a6;
+  font-size: 12px;
+  font-weight: 400;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.task-status.archived {
+  background: #e7ebef;
+  color: #64717d;
+}
+
+.closed-task-button,
+.closed-task-button:disabled {
+  cursor: not-allowed;
+  background: #d8dde2;
+  color: #7a858f;
+  opacity: 1;
+}
+
+@media (max-width: 760px) {
+  .task-table .submitted-time-column {
+    display: table-cell !important;
+    min-width: 150px;
+    white-space: nowrap;
+  }
+}

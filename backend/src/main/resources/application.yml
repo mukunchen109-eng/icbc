@@ -1,0 +1,83 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: financial-intelligence-system
+
+  datasource:
+    url: ${ICBC_DB_URL:jdbc:mysql://icbc-db123.mysql.polardb.rds.aliyuncs.com:3306/db1?useSSL=true&useUnicode=true&serverTimezone=Asia%2FShanghai&characterEncoding=UTF-8}
+    username: ${ICBC_DB_USERNAME:icbc_db123}
+    password: "icbc123!"
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 1
+      connection-timeout: 30000
+      validation-timeout: 5000
+      idle-timeout: 120000
+      max-lifetime: 300000
+      keepalive-time: 60000
+      initialization-fail-timeout: -1
+      data-source-properties:
+        connectTimeout: 10000
+        socketTimeout: 30000
+        tcpKeepAlive: true
+
+  jackson:
+    time-zone: Asia/Shanghai
+
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    default-encoding: UTF-8
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.ssl.enable: ${MAIL_SSL_ENABLE:true}
+      mail.smtp.starttls.enable: ${MAIL_STARTTLS_ENABLE:false}
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 30000
+      mail.smtp.writetimeout: 30000
+
+mybatis:
+  mapper-locations: classpath:mapper/**/*.xml
+  type-aliases-package: com.icbc.financialinfo.modules
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoint:
+    health:
+      show-details: always
+
+app:
+  collection:
+    cron: "0 0 9 * * *"
+
+  archive:
+    retention-days: 30
+    root: ${ARCHIVE_ROOT:./data/archives}
+    report-font: ${REPORT_FONT_PATH:C:/Windows/Fonts/simfang.ttf}
+
+  mail:
+    enabled: ${MAIL_ENABLED:false}
+    from: ${MAIL_FROM:${MAIL_USERNAME:}}
+    from-name: ${MAIL_FROM_NAME:金融智讯}
+
+  report:
+    output-dir: target/generated-reports
+    news-table: news_pool
+    report-table: report
+    report-article-table: report_article
+
+    dify:
+      base-url: https://api.dify.ai
+      api-key: app-1g214jZYSkipYUEjsbj2CX7Q
+      endpoint: /v1/workflows/run
+      response-mode: streaming
+      user: report-module
+      connect-timeout-seconds: 10
+      read-timeout-seconds: 600
+      mock-enabled: false

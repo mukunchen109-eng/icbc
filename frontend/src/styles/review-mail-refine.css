@@ -1,0 +1,107 @@
+.mail-modal > header {
+  align-items: center;
+}
+
+.task-status.archived {
+  background: #edf0f3;
+  color: #526475;
+}
+
+.mail-modal > header h2 {
+  margin: 0;
+}
+
+.mail-recipient-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mail-recipient-actions .outline-button {
+  padding: 7px 11px;
+  font-size: 12px;
+}
+
+.recipient-add-collapsed {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.recipient-add-collapsed > div {
+  grid-template-columns: 1fr 1.8fr auto;
+}
+
+.recipient-row-refined {
+  grid-template-columns: 22px 36px 1fr;
+}
+
+.recipient-row-refined small {
+  font-size: 12px;
+}
+
+.mail-compose {
+  display: grid;
+  gap: 10px;
+  margin: 0 25px 18px;
+}
+
+.mail-compose label {
+  display: grid;
+  gap: 5px;
+  color: #526a7e;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mail-compose input,
+.mail-compose textarea {
+  padding: 9px 10px;
+  border: 1px solid #d5e0e8;
+  border-radius: 6px;
+  color: #24394c;
+  font: inherit;
+  font-weight: 400;
+  resize: vertical;
+}
+
+.mail-result-list {
+  margin: 0 25px;
+  border: 1px solid #dce5ec;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.mail-result-row {
+  display: grid;
+  grid-template-columns: 54px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.mail-result-row:last-child { border-bottom: 0; }
+.mail-result-row b,
+.mail-result-row small,
+.mail-result-row em { display: block; }
+.mail-result-row small { margin-top: 2px; font-size: 12px; }
+.mail-result-row em { margin-top: 4px; color: #aa343c; font-size: 11px; font-style: normal; }
+.mail-result-status { padding: 4px 7px; border-radius: 10px; text-align: center; font-size: 11px; }
+.mail-result-status.success { background: #e4f4ea; color: #28724a; }
+.mail-result-status.failed { background: #fff0f1; color: #aa343c; }
+
+@media (max-width: 680px) {
+  .mail-recipient-head {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .mail-recipient-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+
+  .recipient-add-collapsed > div {
+    grid-template-columns: 1fr;
+  }
+}
