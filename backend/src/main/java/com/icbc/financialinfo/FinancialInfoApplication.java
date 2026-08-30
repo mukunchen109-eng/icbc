@@ -7,5 +7,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @SpringBootApplication
 public class FinancialInfoApplication {
-    public static void main(String[] args) { SpringApplication.run(FinancialInfoApplication.class, args); }
+
+  public static void main(String[] args) {
+    SpringApplication.run(FinancialInfoApplication.class, args);
+  }
 }

@@ -1,14 +1,16 @@
-import { createApp } from 'vue'
-import { createPinia } from 'pinia'
-import App from './App.vue'
-import router from './router'
-import './styles/main.css'
-import './styles/review-workbench.css'
-import './styles/review-interactions.css'
-import './styles/review-viewport.css'
-import './styles/review-task-list.css'
-import './styles/review-demo.css'
-import './styles/review-mail-dialog.css'
-import './styles/review-mail-refine.css'
-import './styles/review-leave-dialog.css'
-createApp(App).use(createPinia()).use(router).mount('#app')
+import { createApp } from "vue";
+import { createPinia } from "pinia";
+import App from "./App.vue";
+import router from "./router";
+import "./styles/main.css";
+import "./styles/review-workbench.css";
+import "./styles/review-interactions.css";
+import "./styles/review-viewport.css";
+import "./styles/review-task-list.css";
+import "./styles/review-demo.css";
+import "./styles/review-mail-dialog.css";
+import "./styles/review-mail-refine.css";
+import "./styles/review-leave-dialog.css";
+import "./styles/admin-pagination.css";
+import "./styles/review-decision-dialog.css";
+createApp(App).use(createPinia()).use(router).mount("#app");

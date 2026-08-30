@@ -1,0 +1,127 @@
+.review-decision-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 29, 47, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.review-decision-dialog {
+  width: min(460px, 100%);
+  overflow: hidden;
+  border: 1px solid #d8e3ec;
+  border-radius: 14px;
+  background: #fff;
+  color: #263d51;
+  box-shadow: 0 22px 64px rgba(7, 28, 46, 0.28);
+  animation: decision-dialog-in 0.18s ease-out;
+}
+
+.decision-content {
+  padding: 0 30px 25px;
+  text-align: center;
+}
+
+.decision-content small {
+  color: #6d8293;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+}
+
+.decision-content h3 {
+  margin: 7px 0 10px;
+  color: #173c59;
+  font-size: 22px;
+}
+
+.decision-content p {
+  margin: 0;
+  color: #64798a;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.decision-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin: 30px auto 18px;
+  border-radius: 50%;
+  background: #e4f5eb;
+  color: #278258;
+}
+
+.decision-icon span {
+  position: relative;
+  width: 25px;
+  height: 13px;
+  border-bottom: 3px solid currentColor;
+  border-left: 3px solid currentColor;
+  transform: translateY(-3px) rotate(-45deg);
+}
+
+.decision-warning .decision-icon {
+  background: #fff0df;
+  color: #c47722;
+}
+
+.decision-warning .decision-icon span {
+  width: 21px;
+  height: 21px;
+  border: 0;
+  transform: none;
+}
+
+.decision-warning .decision-icon span::before,
+.decision-warning .decision-icon span::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  width: 3px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.decision-warning .decision-icon span::before {
+  top: 1px;
+  height: 13px;
+}
+.decision-warning .decision-icon span::after {
+  bottom: 1px;
+  height: 3px;
+}
+
+.review-decision-dialog > footer {
+  display: flex;
+  justify-content: center;
+  padding: 16px 24px;
+  border-top: 1px solid #e5ebf0;
+  background: #f8fafc;
+}
+
+.review-decision-dialog > footer button {
+  min-width: 150px;
+  padding: 10px 22px;
+  background: #1764a5;
+  font-size: 14px;
+}
+
+.decision-warning > footer button {
+  background: #b96b22;
+}
+
+@keyframes decision-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

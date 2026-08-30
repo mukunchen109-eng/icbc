@@ -1,9 +1,47 @@
-.task-status.annotating { background: #f0e9ff; color: #6842a5; }
+.task-status.annotating {
+  background: #f0e9ff;
+  color: #6842a5;
+}
 
-.draft-save-notice { color: #26835f; font-size: 13px; white-space: nowrap; }
-.review-leave-mask { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 24px; background: rgba(14, 24, 36, .48); }
-.review-leave-dialog { width: min(440px, 100%); padding: 24px; border-radius: 12px; background: #fff; box-shadow: 0 18px 48px rgba(14, 24, 36, .2); }
-.review-leave-dialog h3 { margin: 0 0 12px; color: #17212f; font-size: 18px; }
-.review-leave-dialog p { margin: 0; color: #586474; line-height: 1.7; }
-.review-leave-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
-.review-leave-actions button:disabled, .context-actions button:disabled { cursor: not-allowed; opacity: .6; }
+.draft-save-notice {
+  color: #26835f;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.review-leave-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(14, 24, 36, 0.48);
+}
+.review-leave-dialog {
+  width: min(440px, 100%);
+  padding: 24px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(14, 24, 36, 0.2);
+}
+.review-leave-dialog h3 {
+  margin: 0 0 12px;
+  color: #17212f;
+  font-size: 18px;
+}
+.review-leave-dialog p {
+  margin: 0;
+  color: #586474;
+  line-height: 1.7;
+}
+.review-leave-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+.review-leave-actions button:disabled,
+.context-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

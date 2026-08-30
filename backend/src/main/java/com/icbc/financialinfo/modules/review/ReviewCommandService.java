@@ -4,29 +4,282 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.icbc.financialinfo.modules.review.ReviewCommandModels.*;
 import com.icbc.financialinfo.modules.review.ReviewCommandRepository.*;
 import com.icbc.financialinfo.modules.review.ReviewQueryModels.ReviewRecordView;
+import java.util.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import java.util.*;
 
 @Service
 public class ReviewCommandService {
-    private final ReviewCommandRepository repo;
-    private final ObjectMapper json;
-    public ReviewCommandService(ReviewCommandRepository repo,ObjectMapper json){this.repo=repo;this.json=json;}
-    private ReviewOperationException error(HttpStatus status,String message){return new ReviewOperationException(status,message);}
-    private void text(String value,String message){if(value==null||value.isBlank())throw error(HttpStatus.BAD_REQUEST,message);}
-    private void requireReviewer(String role){if(!Set.of("INFO_MANAGER","DEPT_MANAGER").contains(role))throw error(HttpStatus.FORBIDDEN,"当前用户无权修改审核草稿");}
-    private ReportState accessible(long reportId,String role){ReportState report=repo.report(reportId,false).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告不存在"));String prefix="DEPT_MANAGER".equals(role)?"FINAL_":"INITIAL_";if(!report.status().startsWith(prefix))throw error(HttpStatus.CONFLICT,"报告当前状态不可由该角色查看");return report;}
-    private ReportState writable(long reportId,long user,String role){repo.normalizeLegacyStatus(reportId);ReportState report=repo.report(reportId,true).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告不存在"));String prefix="DEPT_MANAGER".equals(role)?"FINAL_":"INITIAL_";boolean open=report.status().endsWith("PENDING")||report.status().endsWith("REVIEWING")||("INITIAL_REJECTED".equals(report.status())&&"INFO_MANAGER".equals(role));if(!report.status().startsWith(prefix)||!open)throw error(HttpStatus.CONFLICT,"报告当前状态不可由该角色审核");if(report.locked()==1&&report.lockedBy()!=null&&!report.lockedBy().equals(user))throw error(HttpStatus.CONFLICT,"报告已被其他审核人员锁定");return report;}
-    private String reviewing(ReportState report){return report.status().startsWith("FINAL_")?"FINAL_REVIEWING":"INITIAL_REVIEWING";}
 
-    @Transactional public ModifyArticleResult modifyArticle(long reportId,long articleId,long user,String role,ModifyArticleRequest request){requireReviewer(role);text(request==null?null:request.reason(),"修改原因不能为空");ReportState report=writable(reportId,user,role);ArticleState article=repo.article(articleId).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告条目不存在"));if(!article.reportId().equals(reportId))throw error(HttpStatus.NOT_FOUND,"报告条目不存在");String title=request.title()==null||request.title().isBlank()?article.title():request.title().trim();String summary=request.summaryContent()==null||request.summaryContent().isBlank()?article.summaryContent():request.summaryContent().trim();if(title.equals(article.title())&&summary.equals(article.summaryContent()))throw error(HttpStatus.BAD_REQUEST,"未提供需要修改的内容");repo.updateArticle(articleId,title,summary);repo.status(reportId,reviewing(report),user);repo.record(reportId,articleId,user,"MODIFY",snapshot(article),snapshot(new ArticleState(article.id(),article.reportId(),article.newsId(),article.category(),title,summary)),request.reason().trim(),null);return new ModifyArticleResult(articleId,reportId,reviewing(report));}
-    @Transactional public AddCommentResult addComment(long reportId,long user,String role,AddCommentRequest request){requireReviewer(role);text(request==null?null:request.commentText(),"批注内容不能为空");ReportState report=writable(reportId,user,role);ArticleState article=repo.article(request.articleId()).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告条目不存在"));if(!article.reportId().equals(reportId))throw error(HttpStatus.NOT_FOUND,"报告条目不存在");repo.status(reportId,reviewing(report),user);String selected=request.selectedText()==null||request.selectedText().isBlank()?null:request.selectedText().trim();return new AddCommentResult(repo.record(reportId,article.id(),user,"COMMENT",selected,null,null,request.commentText().trim()));}
-    @Transactional public AddMarkResult addMark(long reportId,long user,String role,AddMarkRequest request){requireReviewer(role);text(request==null?null:request.selectedText(),"请选择需要标记的文字");String type=request.markType()==null?"":request.markType().trim().toUpperCase();if(!"MODIFY".equals(type))throw error(HttpStatus.BAD_REQUEST,"仅支持标记修改");ReportState report=writable(reportId,user,role);ArticleState article=repo.article(request.articleId()).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告条目不存在"));if(!article.reportId().equals(reportId))throw error(HttpStatus.NOT_FOUND,"报告条目不存在");repo.status(reportId,reviewing(report),user);return new AddMarkResult(repo.record(reportId,article.id(),user,"MARK_MODIFY",request.selectedText().trim(),null,null,null));}
-    @Transactional public ReplaceArticleResult replaceArticle(long reportId,long articleId,long user,String role,ReplaceArticleRequest request){requireReviewer(role);text(request==null?null:request.reason(),"替换原因不能为空");if(request.newNewsId()==null)throw error(HttpStatus.BAD_REQUEST,"替换资讯不能为空");ReportState report=writable(reportId,user,role);ArticleState article=repo.article(articleId).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告条目不存在"));if(!article.reportId().equals(reportId))throw error(HttpStatus.NOT_FOUND,"报告条目不存在");AlternativeState alternative=repo.alternative(reportId,request.newNewsId()).orElseThrow(()->error(HttpStatus.NOT_FOUND,"替换资讯不存在或不属于当前报告的备选条目"));repo.replaceArticle(articleId,alternative.id(),request.reason().trim());repo.status(reportId,reviewing(report),user);repo.record(reportId,alternative.id(),user,"REPLACE",snapshot(article),snapshot(alternative),request.reason().trim(),null);return new ReplaceArticleResult(articleId,alternative.id(),alternative.newsId(),reportId,reviewing(report));}
-    @Transactional(readOnly=true) public List<ReplacementArticle> replacementArticles(long reportId,long user,String role,String category,String keyword){requireReviewer(role);accessible(reportId,role);return repo.replacements(reportId,category,keyword);}
-    @Transactional(readOnly=true) public List<ReviewRecordView> reviewRecords(long reportId,long user,String role){ReportState report=repo.report(reportId,false).orElseThrow(()->error(HttpStatus.NOT_FOUND,"报告不存在"));boolean allowed="INFO_MANAGER".equals(role)&&report.status().startsWith("INITIAL_")||"DEPT_MANAGER".equals(role)&&(report.status().startsWith("FINAL_")||"INITIAL_REJECTED".equals(report.status()));if(!allowed)throw error(HttpStatus.CONFLICT,"报告当前状态不可由该角色查看");return repo.records(reportId);}
-    @Transactional public SubmitReviewResult submit(long reportId,long user,String role,SubmitReviewRequest request){ReportState report=writable(reportId,user,role);String decision=request==null||request.decision()==null?"":request.decision().trim().toUpperCase();String next,comment=request==null||request.comment()==null?null:request.comment().trim();repo.record(reportId,null,user,"SUBMIT",report.status(),decision,null,comment);if("INFO_MANAGER".equals(role)){if(!"APPROVE".equals(decision))throw error(HttpStatus.BAD_REQUEST,"初审只能提交终审");next="FINAL_PENDING";repo.completeAssignment(reportId,user,comment);repo.assignToRole(reportId,"DEPT_MANAGER",comment);}else if("APPROVE".equals(decision)){next="FINAL_APPROVED";repo.completeAssignment(reportId,user,comment);}else if("REJECT".equals(decision)){next="INITIAL_REJECTED";repo.completeAssignment(reportId,user,comment);repo.assignToLatestInitialReviewer(reportId,comment);}else throw error(HttpStatus.BAD_REQUEST,"审核决定错误");repo.finish(reportId,next,user);return new SubmitReviewResult(reportId,report.status(),next);}
-    private String snapshot(Object value){try{return json.writeValueAsString(value);}catch(Exception e){throw new IllegalStateException("审核记录序列化失败",e);}}
+  private final ReviewCommandRepository repo;
+  private final ObjectMapper json;
+
+  public ReviewCommandService(ReviewCommandRepository repo, ObjectMapper json) {
+    this.repo = repo;
+    this.json = json;
+  }
+
+  private ReviewOperationException error(HttpStatus status, String message) {
+    return new ReviewOperationException(status, message);
+  }
+
+  private void text(String value, String message) {
+    if (value == null || value.isBlank()) throw error(HttpStatus.BAD_REQUEST, message);
+  }
+
+  private void requireReviewer(String role) {
+    if (!Set.of("INFO_MANAGER", "DEPT_MANAGER").contains(role)) throw error(
+      HttpStatus.FORBIDDEN,
+      "当前用户无权修改审核草稿"
+    );
+  }
+
+  private ReportState accessible(long reportId, String role) {
+    ReportState report = repo
+      .report(reportId, false)
+      .orElseThrow(() -> error(HttpStatus.NOT_FOUND, "报告不存在"));
+    String prefix = "DEPT_MANAGER".equals(role) ? "FINAL_" : "INITIAL_";
+    if (!report.status().startsWith(prefix)) throw error(
+      HttpStatus.CONFLICT,
+      "报告当前状态不可由该角色查看"
+    );
+    return report;
+  }
+
+  private ReportState writable(long reportId, long user, String role) {
+    repo.normalizeLegacyStatus(reportId);
+    ReportState report = repo
+      .report(reportId, true)
+      .orElseThrow(() -> error(HttpStatus.NOT_FOUND, "报告不存在"));
+    String prefix = "DEPT_MANAGER".equals(role) ? "FINAL_" : "INITIAL_";
+    boolean open =
+      report.status().endsWith("PENDING") ||
+      report.status().endsWith("REVIEWING") ||
+      ("INITIAL_REJECTED".equals(report.status()) && "INFO_MANAGER".equals(role));
+    if (!report.status().startsWith(prefix) || !open) throw error(
+      HttpStatus.CONFLICT,
+      "报告当前状态不可由该角色审核"
+    );
+    if (
+      report.locked() == 1 && report.lockedBy() != null && !report.lockedBy().equals(user)
+    ) throw error(HttpStatus.CONFLICT, "报告已被其他审核人员锁定");
+    return report;
+  }
+
+  private String reviewing(ReportState report) {
+    return report.status().startsWith("FINAL_") ? "FINAL_REVIEWING" : "INITIAL_REVIEWING";
+  }
+
+  @Transactional
+  public ModifyArticleResult modifyArticle(
+    long reportId,
+    long articleId,
+    long user,
+    String role,
+    ModifyArticleRequest request
+  ) {
+    requireReviewer(role);
+    text(request == null ? null : request.reason(), "修改原因不能为空");
+    ReportState report = writable(reportId, user, role);
+    ArticleState article = repo
+      .article(articleId)
+      .orElseThrow(() -> error(HttpStatus.NOT_FOUND, "报告条目不存在"));
+    if (!article.reportId().equals(reportId)) throw error(HttpStatus.NOT_FOUND, "报告条目不存在");
+    String title = request.title() == null || request.title().isBlank()
+      ? article.title()
+      : request.title().trim();
+    String summary = request.summaryContent() == null || request.summaryContent().isBlank()
+      ? article.summaryContent()
+      : request.summaryContent().trim();
+    if (title.equals(article.title()) && summary.equals(article.summaryContent())) throw error(
+      HttpStatus.BAD_REQUEST,
+      "未提供需要修改的内容"
+    );
+    repo.updateArticle(articleId, title, summary);
+    repo.status(reportId, reviewing(report), user);
+    repo.record(
+      reportId,
+      articleId,
+      user,
+      "MODIFY",
+      snapshot(article),
+      snapshot(
+        new ArticleState(
+          article.id(),
+          article.reportId(),
+          article.newsId(),
+          article.category(),
+          title,
+          summary
+        )
+      ),
+      request.reason().trim(),
+      null
+    );
+    return new ModifyArticleResult(articleId, reportId, reviewing(report));
+  }
+
+  @Transactional
+  public AddCommentResult addComment(
+    long reportId,
+    long user,
+    String role,
+    AddCommentRequest request
+  ) {
+    requireReviewer(role);
+    text(request == null ? null : request.commentText(), "批注内容不能为空");
+    ReportState report = writable(reportId, user, role);
+    ArticleState article = repo
+      .article(request.articleId())
+      .orElseThrow(() -> error(HttpStatus.NOT_FOUND, "报告条目不存在"));
+    if (!article.reportId().equals(reportId)) throw error(HttpStatus.NOT_FOUND, "报告条目不存在");
+    repo.status(reportId, reviewing(report), user);
+    String selected = request.selectedText() == null || request.selectedText().isBlank()
+      ? null
+      : request.selectedText().trim();
+    return new AddCommentResult(
+      repo.record(
+        reportId,
+        article.id(),
+        user,
+        "COMMENT",
+        selected,
+        null,
+        null,
+        request.commentText().trim()
+      )
+    );
+  }
+
+  @Transactional
+  public AddMarkResult addMark(long reportId, long user, String role, AddMarkRequest request) {
+    requireReviewer(role);
+    text(request == null ? null : request.selectedText(), "请选择需要标记的文字");
+    String type = request.markType() == null ? "" : request.markType().trim().toUpperCase();
+    if (!"MODIFY".equals(type)) throw error(HttpStatus.BAD_REQUEST, "仅支持标记修改");
+    ReportState report = writable(reportId, user, role);
+    ArticleState article = repo
+      .article(request.articleId())
+      .orElseThrow(() -> error(HttpStatus.NOT_FOUND, "报告条目不存在"));
+    if (!article.reportId().equals(reportId)) throw error(HttpStatus.NOT_FOUND, "报告条目不存在");
+    repo.status(reportId, reviewing(report), user);
+    return new AddMarkResult(
+      repo.record(
+        reportId,
+        article.id(),
+        user,
+        "MARK_MODIFY",
+        request.selectedText().trim(),
+        null,
+        null,
+        null
+      )
+    );
+  }
+
+  @Transactional
+  public ReplaceArticleResult replaceArticle(
+    long reportId,
+    long articleId,
+    long user,
+    String role,
+    ReplaceArticleRequest request
+  ) {
+    requireReviewer(role);
+    text(request == null ? null : request.reason(), "替换原因不能为空");
+    if (request.newNewsId() == null) throw error(HttpStatus.BAD_REQUEST, "替换资讯不能为空");
+    ReportState report = writable(reportId, user, role);
+    ArticleState article = repo
+      .article(articleId)
+      .orElseThrow(() -> error(HttpStatus.NOT_FOUND, "报告条目不存在"));
+    if (!article.reportId().equals(reportId)) throw error(HttpStatus.NOT_FOUND, "报告条目不存在");
+    AlternativeState alternative = repo
+      .alternative(reportId, request.newNewsId())
+      .orElseThrow(() -> error(HttpStatus.NOT_FOUND, "替换资讯不存在或不属于当前报告的备选条目"));
+    repo.replaceArticle(articleId, alternative.id(), request.reason().trim());
+    repo.status(reportId, reviewing(report), user);
+    repo.record(
+      reportId,
+      alternative.id(),
+      user,
+      "REPLACE",
+      snapshot(article),
+      snapshot(alternative),
+      request.reason().trim(),
+      null
+    );
+    return new ReplaceArticleResult(
+      articleId,
+      alternative.id(),
+      alternative.newsId(),
+      reportId,
+      reviewing(report)
+    );
+  }
+
+  @Transactional(readOnly = true)
+  public List<ReplacementArticle> replacementArticles(
+    long reportId,
+    long user,
+    String role,
+    String category,
+    String keyword
+  ) {
+    requireReviewer(role);
+    accessible(reportId, role);
+    return repo.replacements(reportId, category, keyword);
+  }
+
+  @Transactional(readOnly = true)
+  public List<ReviewRecordView> reviewRecords(long reportId, long user, String role) {
+    ReportState report = repo
+      .report(reportId, false)
+      .orElseThrow(() -> error(HttpStatus.NOT_FOUND, "报告不存在"));
+    boolean allowed =
+      ("INFO_MANAGER".equals(role) && report.status().startsWith("INITIAL_")) ||
+      ("DEPT_MANAGER".equals(role) &&
+        (report.status().startsWith("FINAL_") || "INITIAL_REJECTED".equals(report.status())));
+    if (!allowed) throw error(HttpStatus.CONFLICT, "报告当前状态不可由该角色查看");
+    return repo.records(reportId);
+  }
+
+  @Transactional
+  public SubmitReviewResult submit(
+    long reportId,
+    long user,
+    String role,
+    SubmitReviewRequest request
+  ) {
+    ReportState report = writable(reportId, user, role);
+    String decision = request == null || request.decision() == null
+      ? ""
+      : request.decision().trim().toUpperCase();
+    String next,
+      comment = request == null || request.comment() == null ? null : request.comment().trim();
+    repo.record(reportId, null, user, "SUBMIT", report.status(), decision, null, comment);
+    if ("INFO_MANAGER".equals(role)) {
+      if (!"APPROVE".equals(decision)) throw error(HttpStatus.BAD_REQUEST, "初审只能提交终审");
+      next = "FINAL_PENDING";
+      repo.completeAssignment(reportId, user, comment);
+      repo.assignToRole(reportId, "DEPT_MANAGER", comment);
+    } else if ("APPROVE".equals(decision)) {
+      next = "FINAL_APPROVED";
+      repo.completeAssignment(reportId, user, comment);
+    } else if ("REJECT".equals(decision)) {
+      next = "INITIAL_REJECTED";
+      repo.completeAssignment(reportId, user, comment);
+      repo.assignToLatestInitialReviewer(reportId, comment);
+    } else throw error(HttpStatus.BAD_REQUEST, "审核决定错误");
+    repo.finish(reportId, next, user);
+    return new SubmitReviewResult(reportId, report.status(), next);
+  }
+
+  private String snapshot(Object value) {
+    try {
+      return json.writeValueAsString(value);
+    } catch (Exception e) {
+      throw new IllegalStateException("审核记录序列化失败", e);
+    }
+  }
 }

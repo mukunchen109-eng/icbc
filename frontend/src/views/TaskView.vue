@@ -1,38 +1,58 @@
 <script setup>
-import { onMounted, ref } from 'vue'
-import http from '../api/http'
+import { computed, onMounted, ref } from "vue";
+import http from "../api/http";
 
-const tasks = ref([])
-const loading = ref(false)
-const error = ref('')
+const tasks = ref([]);
+const total = ref(0);
+const pageNum = ref(1);
+const pageSize = 10;
+const loading = ref(false);
+const error = ref("");
+const totalPages = computed(() =>
+  Math.max(1, Math.ceil(total.value / pageSize)),
+);
 
-async function loadTasks() {
-  loading.value = true
-  error.value = ''
+async function loadTasks(targetPage = pageNum.value) {
+  loading.value = true;
+  error.value = "";
 
   try {
-    const response = await http.get('/tasks')
-    tasks.value = response.data.data
+    const response = await http.get("/tasks", {
+      params: { pageNum: targetPage, pageSize },
+    });
+    tasks.value = response.data.data?.records || [];
+    total.value = Number(response.data.data?.total || 0);
+    pageNum.value = Number(response.data.data?.pageNum || targetPage);
   } catch (exception) {
-    error.value =
-      exception.response?.data?.message || '任务记录加载失败'
+    error.value = exception.response?.data?.message || "任务记录加载失败";
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 
-onMounted(loadTasks)
+function changePage(page) {
+  if (
+    loading.value ||
+    page < 1 ||
+    page > totalPages.value ||
+    page === pageNum.value
+  )
+    return;
+  loadTasks(page);
+}
+
+onMounted(loadTasks);
 </script>
 
 <template>
   <div class="task-heading">
     <div>
-      <h2>任务与日志</h2>
+      <h2>采集日志</h2>
       <p class="muted">查看每日资讯采集任务的执行状态和日志摘要</p>
     </div>
 
     <button type="button" :disabled="loading" @click="loadTasks">
-      {{ loading ? '刷新中...' : '刷新' }}
+      {{ loading ? "刷新中..." : "刷新" }}
     </button>
   </div>
 
@@ -70,12 +90,31 @@ onMounted(loadTasks)
           <td>{{ task.status }}</td>
           <td>{{ task.processedCount }}</td>
           <td>{{ task.retryCount }}</td>
-          <td>{{ task.message || '-' }}</td>
-          <td>{{ task.startedAt || '-' }}</td>
-          <td>{{ task.finishedAt || '-' }}</td>
+          <td>{{ task.message || "-" }}</td>
+          <td>{{ task.startedAt || "-" }}</td>
+          <td>{{ task.finishedAt || "-" }}</td>
         </tr>
       </tbody>
     </table>
+    <div class="admin-pagination">
+      <span>共 {{ total }} 条，第 {{ pageNum }} / {{ totalPages }} 页</span>
+      <div class="admin-pagination-actions">
+        <button
+          type="button"
+          :disabled="loading || pageNum <= 1"
+          @click="changePage(pageNum - 1)"
+        >
+          上一页
+        </button>
+        <button
+          type="button"
+          :disabled="loading || pageNum >= totalPages"
+          @click="changePage(pageNum + 1)"
+        >
+          下一页
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
